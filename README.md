@@ -1,0 +1,2 @@
+# lastGLM
+proyek akhir glm
