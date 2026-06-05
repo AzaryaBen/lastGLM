@@ -1,0 +1,259 @@
+---
+title: "GLM_Poisson_NegativeBinomial"
+original author: "Randhy Pratama, Sebastian Adrian Halim, Celline Vercelli, Maria Riwie"
+edited by: "Owen Nathanael Hery"
+output: word_document
+---
+```{r, message=FALSE, warning=FALSE}
+library(vcd) # Goodfit
+library(dgof) # ks.test
+library(fitdistrplus) #MLE
+library(ggplot2)
+library(dplyr)
+library(EnvStats)
+library(readxl)
+```
+
+Fokus utama pada GLM dengan tipe respons diskrit, adalah memprediksi ekspektasi frekuensi suatu kejadian. Pada collective risk model, ekspektasi frekuensi kejadian ini dinyatakan sebagai E[N]
+
+# GLM Diskrit
+
+Untuk kasus GLM dengan tipe respons diskrit, ada dua kemungkinan distribusi keluarga eksponensial yang dapat digunakan yaitu Poisson dan Binomial negative. Kedua distribusi ini memiliki karakteristik yang berbeda jika kita lihat dari rataan dan variansinya.
+
+![Exponential family distributions and their parameters](ExFam.PNG)
+
+Perhatikan bahwa distribusi Poisson akan memiliki variansi yang sama dengan meannya, karena V(miu)=miu dan phi=1 yang mengakibatkan Var=miu
+
+Sedangkan distribusi Binomial Negatif akan memiliki variansi yang lebih besar dari meannya.
+
+Jadi langkah pertama yang dapat kita lakukan untuk menentukan distribusi apa yang cocok untuk data, adalah dengan melihat nilai mean dan variansi dari respons.
+
+## Contoh Data
+
+Berikut adalah data jumlah kematian akibat diabetes yang dipengaruhi oleh faktor usia dan jenis kelamin
+
+```{r}
+data=read_excel("G:/!PR BAB 6 GLM/Data Sets/Diabetes/diabetes.xls")
+data$gender=as.factor(data$gender)
+data$age=as.factor(data$age)
+head(data)
+str(data)
+summary(data)
+```
+
+Yang menjadi respons adalah death (banyak kematian).
+
+## Menentukan Distribusi yang cocok
+
+```{r}
+data.frame("Mean"=mean(data$deaths),
+           "Variance"=var(data$deaths))
+```
+
+Karena variansi lebih besar daripada mean untuk respons death, maka kecurigaan kita adalah respons ini mengikuti distribusi Binomial Negatif. Untuk memperjelas, maka lakukan uji Chi-Square di bawah ini.
+
+1) Chi-Square Goodness of Fit
+
+```{r,warning=FALSE,message=FALSE}
+# Uji yang digunakan adalah Chi-Square Goodness of Fit
+
+# jika diinginkan menguji terhadap dist neg binom dengan parameter
+# tertentu, maka par dapat diisi dengan nilai parameter yang diinginkan
+
+# jika diinginkan distribusi yang diuji adalah poisson,
+# maka "nbinomial" cukup diganti dengan "poisson"
+summary(goodfit(data$deaths,
+                type="nbinomial",
+                method=c("MinChisq"),
+                par=NULL))
+
+summary(goodfit(data$deaths,
+                type="poisson",
+                method=c("MinChisq"),
+                par=NULL))
+```
+Berdasarkan uji Chi-Square Goodness of Fit dapat dilihat bahwa
+1) p-value yang dihasilkan dari uji Chi-Square Goodness of Fit terhadap distribusi binomial negatif adalah 0.5450997 yang artinya lebih besar dari taraf signifikansi 0.05 sehingga respons death cocok dengan distribusi binomial negatif
+2) p-value yang dihasilkan dari uji Chi-Square Goodness of Fit terhadap distribusi poisson adalah 0 yang artinya lebih kecil dari taraf signifikansi 0.05 sehingga respons death tidak cocok dengan distribusi poisson
+
+Model dengan distribusi binomial negatif memiliki link function yang sama dengan poisson yaitu log. Artinya log(miu) yang linier dengan parameter-parameter dan offset pada model. Dalam kasus data ini, terdapat offset yaitu variabel l_popn. Offset berfungsi sebagai exposure untuk setiap observasi.
+
+## Plot-Plot
+
+Sebelum memulai proses membangun model, akan dibuat beberapa plot dan pengelompokan data untuk melihat perilaku dan hubungan antar variabel.
+
+```{r}
+# scatter plot log(deaths) terhadap agemidpt berdasarkan gender
+ggplot(data, aes(x = agemidpt, y = log(deaths))) + 
+  geom_point(aes(color = gender)) + ylim(-4,6)
+```
+
+Dari plot di atas, dapat ditarik satu kesimpulan penting yaitu hubungan antara log dari deaths dengan agemidpt tidak linier. Kemungkinan besar dapat digunakan model kuadratik atau model kubik untuk merepresentasikan hubungannya.
+
+```{r}
+# barplot banyak kematian terhdapa kelompok usia, secara umum dan juga dengan pembagian gender
+ggplot(data, aes(x=age,y=deaths)) +
+  geom_col(fill="deepskyblue")
+ggplot(data, aes(x=age,y=deaths)) +
+  geom_col(fill="red") + facet_grid(vars(gender))
+```
+
+```{r}
+# melihat berapa banyak kematian akibat diabetes berdasarkan gender
+data %>% group_by(gender) %>%
+  summarise(count = sum(deaths))
+```
+
+## Menentukan Base Level untuk Age dan Gender
+
+```{r}
+# menspesifikasikan base level untuk gender dan kelompok usia
+data = data %>% mutate(gender = relevel(gender, ref = "Male"))
+data = data %>% mutate(age = relevel(age, ref = "75-84"))
+```
+
+## Membangun Model
+
+Pada contoh ini, variabel age tidak akan digunakan. Sebagai penggantinya, variabel age midpoint (agemidpt) yang akan digunakan. Pada prakteknya, lebih baik bangun model menggunakan age dan agemidpt kemudian bandingkan kedua model tersebut, mana yang lebih
+
+Kemungkinan model yang dapat dibuat dengan variabel ada dua, yaitu model dengan dan tanpa interaksi. Variabel agemidpt sendiri membuat modelnya dapat ditambahkan dengan polinom. Dari plot log(death) dengan agemidpt, dapat dilihat hubungan yang mungkin adalah kuadratik dan kubik. Berikut beberapa kemungkinan variabel dalam model yang dapat dibuat dengan offset log populasi
+
+Gender+Agemidpt
+
+Gender+Agemidpt+Agemidpt^2
+
+Gender+Agemidpt+Agemidpt^2 +(Agemidpt)^3
+
+Gender+Agemidpt+Agemidpt*Gender
+
+Gender+Agemidpt+Agemidpt^2 +Agemidpt*Gender
+
+Gender+Agemidpt+Agemidpt^2 +Agemidpt^3 +Agemidpt*Gender
+
+```{r,results='hide',message=FALSE,warning=FALSE}
+# seluruh model dengan menggunakan agemidpt berikut interaksi dan hubungan 
+# kuadratik/kubiknya
+model1=glm.nb(
+  deaths ~ gender + agemidpt + 
+    offset(l_popn),data=data,link=log)
+summary(model1)
+
+model2=glm.nb(
+  deaths ~ gender + agemidpt + 
+    I(agemidpt^2) + 
+    offset(l_popn),data=data,link=log)
+summary(model2)
+
+model3=glm.nb(
+  deaths ~ gender + agemidpt + 
+    I(agemidpt^2) + I(agemidpt^3) + 
+    offset(l_popn),data=data,link=log)
+summary(model3)
+
+model14=glm.nb(
+  deaths ~ gender + agemidpt + 
+    agemidpt*gender + 
+    offset(l_popn),data=data,link=log)
+summary(model14)
+
+model15=glm.nb(
+  deaths ~ gender + agemidpt + 
+    I(agemidpt^2) + agemidpt*gender + 
+    offset(l_popn),data=data,link=log)
+summary(model15)
+
+model16=glm.nb(
+  deaths ~ gender + agemidpt + 
+    I(agemidpt^2) + I(agemidpt^3) + agemidpt*gender + 
+    offset(l_popn),data=data,link=log)
+summary(model16)
+```
+![Deviance Formula](Deviance.PNG)
+
+![Residual Deviance Formula](DevResid.PNG)
+
+```{r,warning=FALSE,message=FALSE}
+# model yang paling baik, yaitu menggunakan agemidpt, 
+# memiliki hubungan kuadratik dengan log deaths, dan terdapat interaksi dengan gender
+
+modelakhir = glm.nb(
+  deaths ~ gender + agemidpt +
+    I(agemidpt^2) +
+    agemidpt*gender +
+    offset(l_popn),data=data,link=log)
+summary(modelakhir)
+```
+```{r,warning=FALSE}
+# Model Akhir dengan Stepwise Regression
+modelakhir2=step(glm.nb(
+  deaths ~ gender + agemidpt +
+    I(agemidpt^2) + I(agemidpt^3) + agemidpt*gender +
+    offset(l_popn),data=data,link=log),direction = "both",
+  trace = FALSE)
+summary(modelakhir2)
+```
+
+196 ## Memilih Model Akhir
+
+198 ![Summary](Perbandingan.PNG)
+
+200 ## Selang Kepercayaan
+
+202 1) SK Koefisien
+
+```{r,warning=FALSE}
+confint(modelakhir, level=0.95)
+confint(modelakhir2, level=0.95)
+```
+
+209 2) SK Mean---disesuaikan dengan link functionnya
+
+```{r,warning=FALSE}
+A=exp(data.frame(predict(modelakhir,
+                         newdata = data,
+                         interval = 'confidence',
+                         level=0.95))) %>% mutate(Deaths= data$deaths)
+A
+
+B=exp(data.frame(predict(modelakhir2,
+                         newdata = data,
+                         interval = 'confidence',
+                         level=0.95))) %>% mutate(Deaths= data$deaths)
+B
+```
+
+225 ## Analysis of Deviance
+
+```{r,warning=FALSE}
+anova(modelakhir, test="Chisq")
+anova(modelakhir2, test="Chisq")
+anova(modelakhir,modelakhir2,test="Chisq")
+```
+
+233 Pengurangan paling besar terletak pada penambahan variabel agemidpt. Hal ini dapat terlihat dari p-valuenya yang kecil sehingga variabel tersebut sangat signifikan dalam model ini.
+
+235 ## Fitting dan Prediksi
+
+237 Bandingkan hasil prediksi dengan data validation. Jika ada data baru, sintak prediksinya sama, yaotu dengan fungsi predict
+
+```{r}
+# prediksi rata-rata banyak kematian akibat diabetes dengan data
+#Floor karena kematian harus bulat
+pred=floor(exp(predict(modelakhir,data)))
+data.frame(pred,data$deaths)
+
+pred2=floor(exp(predict(modelakhir2,data)))
+data.frame(pred,pred2,data$deaths)
+```
+
+249 Hasil dari Prediksi untuk frekuensi kematian dapat dianalogikan sebagai E[N] pada collective risk model.
+
+```{r}
+library(Metrics)
+rmse(data$deaths,pred)
+rmse(data$deaths,pred2)
+
+rmsle(data$deaths,pred)
+rmsle(data$deaths,pred2)
+```
+

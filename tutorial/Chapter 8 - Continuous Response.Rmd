@@ -1,0 +1,245 @@
+---
+title: "GLM_Continuous Response"
+author: "Sebastian Adrian Halim, Riwie Siregar, Vincensius Ferer C., Owen Nathanael"
+date: "18/05/2024"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(readxl)
+library(Metrics) # RMSE/RMSLE
+library(dplyr)
+library(ggplot2)
+library(dgof) # ks.test
+library(fitdistrplus) # MLE
+library(actuar)
+library(SuppDists)
+library(EnvStats)
+```
+
+Fokus utama pada GLM dengan tipe respons kontinu adalah memprediksi ekspektasi severity suatu kejadian. Pada collective risk model, ekspektasi severity kejadian ini dinyatakan sebagai E[X].
+
+#Gamma GLM
+
+1) total: settled amount
+
+2) inj1, ..., inj5: injury 1, ..., injury 5 coded as 1 = no injury; 2, 3, 4, 5 = injury severities; 6 = fatal injury; 9 = not recorded
+
+3) legrep: legal representation (0 = no, 1 = yes)
+
+4) accmonth: accident month (1 - July 1989, ..., 120 - June 1999)
+
+5) repmonth: reporting month (as above)
+
+6) finmonth: finalization month (as above)
+
+7) op_time: operational time
+
+
+```{r}
+data=read_excel("G:/!PR BAB 6 GLM/Data Sets/Personal Injury/persinj.xls")
+data$legrep=as.factor(data$legrep)
+head(data)
+```
+
+```{r}
+str(data)
+summary(data)
+```
+
+# Cek Distribusi Respons
+
+Lakukan MLE Gamma kepada Settled Amount of claim
+
+```{r,message=FALSE,warning=FALSE}
+Gam=summary(fitdist(data$total/1000000,"gamma"))
+Gam$estimate
+
+meandata    = Gam$estimate[1] * ( 1/Gam$estimate[2])    * 1000000  ;meandata
+variansidata=(Gam$estimate[1])*((1/Gam$estimate[2])^2)*(1000000^2);variansidata
+
+scalebintang=variansidata/(meandata);scalebintang
+shapebintang=meandata/(scalebintang);shapebintang
+
+```
+Pertama-tama, lihat dahulu secara grafis apakah data ini cocok dengan distribusi gamma
+
+```{r}
+#dengan parameter shape & scale
+h = hist(data$total,xlim=c(0,200000),
+         breaks = seq(0,4500000,900),probability = T,
+         main = paste("Histogram of Settled Amount with Gamma Fitted"),
+         col="cadetblue3",
+         xlab = "Settled Amount",
+         ylab = "probability")
+curve(dgamma(x,
+             shape = 0.6162608 ,
+             scale=1000000/16.0598252), # serupa dengan 62267.18
+      add=TRUE,
+      lwd=2,
+      col="red")
+
+#dengan parameter shape & rate
+h = hist(data$total,xlim=c(0,200000),
+         breaks = seq(0,4500000,900),probability = T,
+         main = paste("Histogram of Settled Amount with Gamma Fitted"),
+         col="cadetblue3",
+         xlab = "Settled Amount",
+         ylab = "probability")
+curve(dgamma(x,
+             shape = 0.6162608 ,
+             rate = 16.0598252 /1000000), # serupa dengan 62267.18
+      add=TRUE,
+      lwd=2,
+      col="red")
+```
+
+Lakukan hal yang serupa dengan Inverse Gaussian
+
+```{r}
+Gau=summary(fitdist(data$total/1000000,"invgauss", lower=c(0,0),
+                    start = list (mean=0.5, shape = 5)))
+```
+
+```{r}
+Gau$estimate
+```
+```{r}
+meandata=Gau$estimate[1]*1000000;meandata
+variansi=((Gau$estimate[1]^3)/Gau$estimate[2])*(1000000^2);variansi
+
+lambdadata = meandata^3/variansi ; lambdadata
+```
+
+
+```{r}
+h = hist(data$total,xlim=c(0,200000),
+         breaks = seq(0,4500000,900),probability = T,
+         main = paste("Histogram of Settled Amount with Inverse Gaussian Fitted"),
+         col="cadetblue3",
+         xlab = "Settled Amount",
+         ylab = "probability")
+curve(dinvGauss(x,
+                nu = 0.038371236*1000000, #Mean
+                lambda = lambdadata ), #Shape
+      add=TRUE,
+      lwd=2,
+      col="red")
+```
+
+```{r}
+Gam$aic
+Gau$aic
+
+Gam$bic
+Gau$bic
+```
+
+Terlihat bahwa distribusi Gamma memiliki nilai AIC yang lebih kecil daripada inverse gaussian, maka distribusi yang lebih cocok untuk respon Settled Amount ini adalah distribusi Gamma.
+
+Lakukan uji Kolmogorov-Smirnov untuk memastikan
+
+```{r}
+nrow(data)
+```
+
+```{r,warning=FALSE}
+set.seed(44)
+ks.test(data$total,
+        rgamma(22036,
+               shape = 0.6162608,
+               rate = 16.0598252/1000000),
+        alternative = "two.sided",
+        exact = TRUE)
+```
+
+Kesimpulannya, data juga tidak berdistribusi gamma karena p-value yang dihasilkan dari uji Kolmogorov-Smirnov lebih kecil daripada taraf signifikansi.
+
+Karena ini hanya ilustrasi, kami berikan contoh membuat model GLM nya, meskipun data tidak berdistribusi gamma (dan inverse gaussian)
+
+# Model GLM
+
+Langsung dilakukan stepwise regression, ternyata variabel yang tidak dipakai hanya accident month
+
+```{r}
+model1=step(glm(total ~ op_time+
+                  legrep+
+                  op_time*legrep+
+                  inj1+
+                  inj2+
+                  inj3+
+                  inj4+
+                  inj5+
+                  accmonth+
+                  repmonth+
+                  finmonth
+              ,family = Gamma(link = "log")
+              ,data=data)
+              ,direction = "both"
+              ,trace = FALSE)
+summary(model1)
+```
+Bandingkan dengan model di buku
+
+```{r}
+model2=step(glm(total ~ op_time+
+                  legrep+
+                  op_time*legrep
+                ,family = Gamma(link = "log")
+                ,data=data)
+            ,direction = "both"
+            ,trace = FALSE)
+summary(model2)
+
+```
+
+# Selang Kepercayaan
+
+1) SK Koefisien
+
+```{r,warning=FALSE,message=FALSE}
+confint(model1, level = 0.95)
+```
+
+```{r,warning=FALSE,message=FALSE}
+confint(model2, level = 0.95)
+```
+
+2) SK Mean---disesuaikan dengan link functionnya (log)
+
+```{r,warning=FALSE}
+head(exp(data.frame(predict(model1, 
+                            newdata = data, 
+                            interval = 'confidence', 
+                            level=0.95))) %>% mutate(SettledAmount= data$total))
+```
+
+```{r,warning=FALSE}
+head(exp(data.frame(predict(model2, 
+                            newdata = data, 
+                            interval = 'confidence', 
+                            level=0.95))) %>% mutate(SettledAmount= data$total))
+```
+
+# Pengurangan Residual
+
+```{r,warning=FALSE}
+anova(model1, test="Chisq")
+```
+
+```{r,warning=FALSE}
+anova(model2, test="Chisq")
+```
+
+# Prediksi
+
+```{r}
+pred=exp(predict(model1,data))
+pred2=exp(predict(model2,data))
+head(data.frame(pred,pred2,data$total))
+```
+
+
+Hasil dari prediksi untuk Settled Amount of Claim dapat dianalogikan E[X] pada Collective Risk Model.
