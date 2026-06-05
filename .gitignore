@@ -1,0 +1,14 @@
+# Kredensial & File Konfigurasi RStudio
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Cache & Hasil Kompilasi Dokumen (Ini yang bakal muncul kalau pakai Rmd/Quarto)
+*_cache/
+*_files/
+.ipynb_checkpoints/
+
+# File Log & Temporary
+*.Rapp.history
+*.tar.gz
