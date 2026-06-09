@@ -12,3 +12,6 @@
 # File Log & Temporary
 *.Rapp.history
 *.tar.gz
+
+# File more than 50MB
+vehicle_insurance_data/motor_data_master_11_18.csv
