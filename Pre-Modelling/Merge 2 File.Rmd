@@ -1,0 +1,58 @@
+---
+title: "Penggabungan Periode 2011-2014 dan 2014-2018"
+author: "Azarya Benhanan Isriyanto"
+date: "2026-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import library}
+# Memanggil library yang diperlukan
+library(readr)
+library(dplyr)
+```
+
+```{r import kedua data}
+# Import kedua file CSV
+df_11_14 <- read_csv("vehicle_insurance_data/motor_data11-14lats.csv")
+df_14_18 <- read_csv("vehicle_insurance_data/motor_data14-2018.csv")
+```
+
+```{r}
+# Validasi awal struktur kolom sebelum digabungkan
+# Memastikan jumlah kolom dan nama kolom di kedua dataset sama persis
+if (identical(names(df_11_14), names(df_14_18))) {
+  print("Aman: Struktur kolom kedua file identik. Proses penggabungan dapat dilanjutkan.")
+} else {
+  warning("Peringatan: Ada perbedaan nama atau urutan kolom! Periksa kembali dengan colnames().")
+}
+```
+```{r}
+# Mengubah kedua kolom menjadi numerik
+# Nilai teks yang tidak bisa diubah jadi angka otomatis akan dikonversi menjadi NA oleh R
+df_11_14 <- df_11_14 %>% 
+  mutate(CARRYING_CAPACITY = as.numeric(CARRYING_CAPACITY))
+
+df_14_18 <- df_14_18 %>% 
+  mutate(CARRYING_CAPACITY = as.numeric(CARRYING_CAPACITY))
+
+```
+
+```{r}
+# Menggabungkan kedua data secara vertikal (baris ditambah ke bawah)
+motor_data_all <- bind_rows(df_11_14, df_14_18)
+
+# Tampilkan ringkasan singkat untuk memastikan jumlah baris sudah bertambah
+print(paste("Total baris Periode 2011-2014:", nrow(df_11_14)))
+print(paste("Total baris Periode 2014-2018:", nrow(df_14_18)))
+print(paste("Total baris setelah digabung:", nrow(motor_data_all)))
+```
+
+```{r export data}
+# Export data yang sudah digabungkan menjadi 1 file master baru
+write_csv(motor_data_all, "vehicle_insurance_data/motor_data_master_11_18.csv")
+```
+
