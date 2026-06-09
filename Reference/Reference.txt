@@ -1,0 +1,3 @@
+De Jong, P., & Heller, G. Z. (2008). Generalized linear models for insurance data. Cambridge University Press.
+
+Terefe, Edossa (2023), “Vehicle Insurance data”, Mendeley Data, V1, doi: 10.17632/34nfrk36dt.1
