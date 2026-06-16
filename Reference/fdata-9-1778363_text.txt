@@ -1,0 +1,1071 @@
+--- PAGE 1 ---
+TYPEOriginal Research
+PUBLISHED 23 March 2026
+DOI10.3389/fdata.2026.1778363
+OPENACCESS
+EDITEDBY
+Cornelio Yáñez-Márquez,
+National Polytechnic Institute (IPN),Mexico
+REVIEWEDBY
+Michal Pesta,Charles University, CzechiaRobin Van Oirbeek,Ageas Re, Belgium
+*CORRESPONDENCE
+Edossa Merga Terefe
+edossa.terefe@umu.se
+RECEIVED 30 December 2025
+REVISED23 February 2026
+ACCEPTED 02 March 2026
+PUBLISHED 23 March 2026
+CITATION
+Terefe EM and Aga MA (2026) Tree-basedmachine learning methods for predictingvehicle insurance claim size.Front. Big Data 9:1778363.
+doi: 10.3389/fdata.2026.1778363
+COPYRIGHT
+©2026 Terefe and Aga. This is an
+open-access article distributed under theterms of the Creative Commons
+Attribution License (CC BY) .T h eu s e ,
+distribution or reproduction in otherforums is permitted, provided theoriginal author(s) and the copyright
+owner(s) are credited and that the
+original publication in this journal iscited, in accordance with acceptedacademic practice. No use, distribution
+or reproduction is permitted which does
+not comply with these terms.Tree-based machine learning
+methods for predicting vehicleinsurance claim size
+Edossa Merga Terefe1,2*and Merga Abdissa Aga3
+1Department of Diagnostics and Intervention, Umeå University, Umeå, Sweden,2Research Center for
+Statistics, University of Geneva, Geneva, Switzerland,3Department of Statistics, Salale University, Fiche,
+Ethiopia
+Vehicle insurance claim severity modeling requires accurate and interpretable
+methods that can handle skewed and heterogeneous loss data. This study
+provides a structured empirical comparison between classical parametric
+regression models and tree-based ensemble learning approaches for predicting
+claim size conditional on claim occurrence. The analysis is conducted within
+a cross-sectional conditional severity framework using real-world motorinsurance data. We implement and compare ordinary least squares (OLS),
+a Tweedie generalized linear model (GLM), and three ensemble methods:
+bagging, random forests (RFs), and gradient boosting. Model performance isevaluated using out-of-sample root mean square error (RMSE), and variable
+importance measures assess the relative contribution of predictors. The results
+indicate that tree-based ensemble methods achieve modest improvementsin predictive accuracy relative to classical parametric models. The Tweedie
+GLM remains a competitive, ﬂexible parametric benchmark for skewed positive
+claimamounts.Variableimportanceanalysisconsistentlyidentiﬁespremiumandinsured value as key determinants of claim severity. Overall, the ﬁndings suggest
+that ensemble learning methods can complement traditional actuarial models,
+offering additional ﬂexibility in capturing non-linear effects while maintainingcomparable predictive performance in moderate-complexity severity data.
+KEYWORDS
+claim size prediction, machine learning, tree-based ensemble methods, variable
+importance,vehicleinsurance
+1 Introduction
+Acentralchallengeintheinsuranceindustryistodeterminepremiumsthataccurately
+reﬂect the level of risk represented by each policyholder. Risk heterogeneity across
+customers necessitates a comprehensive understanding of factors that inﬂuence boththe likelihood and the ﬁnancial magnitude of insurance claims. In non-life insurance,
+particularly motor vehicle insurance, accurate estimation of claim severity is essential for
+pricing, capital allocation, and risk management. Underestimation of claim costs maythreateninsurersolvency,whereasoverestimationcanreducecompetitivenessandimpair
+customerretention(HanafyandMing,2021).
+While premium determination typically involves modeling both claim
+frequency and claim severity, the present study focuses exclusively on conditionalclaim severity, deﬁned as the claim size given that a claim has occurred.
+This distinction is important: rather than modeling the full frequency–severity
+Frontiersin BigData 01 frontiersin.org
+--- PAGE 2 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+process or the unconditional loss distribution, we restrict
+attentiontostrictlypositiveclaimamountsandevaluatepredictiveperformancewithinaconditionalframework.
+Recentdevelopmentsininsuranceanalyticshavedemonstrated
+thegrowingrelevanceofadvancedpredictivemodelingtechniques.Studies similar to those by Guillen et al. (2019), Roel et al. (2017),
+Gao and Wuthrich (2018), and Gao et al. (2019) illustrate the
+increasing integration of telematics and machine learning (ML)toolsintoactuarialpractice.Thesecontributionsemphasizetherole
+ofﬂexiblemodelingapproachesincapturingcomplexrelationships
+withinhigh-dimensionalinsurancedata.
+Parallel to this development, actuarial research has explored
+tree-based methods in the context of individual-claims reservingand structured loss development. For example, Janoušek and
+PeŽta (2025) investigates regression trees and bagging techniques
+for individual-claims reserving, highlighting issues of predictivestability and robustness. Similarly, Maciak et al. (2022) proposes
+functional proﬁle methods for structured claims development
+modeling, emphasizing interpretability and the longitudinal
+structureofinsurancedata.
+However, reserving frameworks diﬀer fundamentally from
+cross-sectional severity modeling. Reserving models typically relyondynamicclaimdevelopmentprocesses,structureddevelopmenttriangles, reporting delays, and time-evolving liabilities. In
+contrast, the present study employs a cross-sectional dataset of
+settledclaimsanddoesnotmodelclaimdevelopment,outstandingliabilities, or temporal updating. Although methodological
+insights regarding stability and interpretability are relevant
+across contexts, structured development modeling doesnot directly carry over to the conditional severity setting
+consideredhere.
+The dataset analyzed in this study comprises motor insurance
+contracts from Ethiopia and exhibits substantial zero inﬂation,with the majority of policies reporting no claim payment during
+the observation period. To maintain coherence with the modelingobjective, we conduct a conditional severity analysis by excluding
+observations with zero claims and focusing exclusively on strictly
+positiveclaimsizes.Thisapproachallowsforatargetedcomparisonofpredictivemodelsforclaimseveritywithoutconﬂatingfrequency
+andseveritycomponents.
+Within this framework, we provide a structured empirical
+comparison between classical parametric regression models andtree-based ensemble learning methods. Speciﬁcally, we employ a
+Tweedie generalized linear model (GLM) as a ﬂexible parametricbenchmark for skewed positive claim amounts and compare its
+performance with bagging, random forests (RFs), and gradient
+boosting. Model evaluation is based on out-of-sample predictiveaccuracyandinterpretabilityconsiderations.
+Rather than proposing a novel methodological framework,
+this study contributes empirical evidence on the comparativeperformance of established statistical and machine learning
+approaches when applied to motor insurance severity data from
+an emerging market context. Given the relative scarcity of publiclyanalyzed Ethiopian insurance datasets in the actuarial literature,
+the ﬁndings provide practical insights into the behavior, stability,
+andpredictivecapacityofdiﬀerentmodelingstrategiesunderdata-constrainedconditions.The remainder of the article is organized as follows. Section
+2 describes the dataset and presents exploratory analysis. Section3 outlines the statistical and machine learning models. Section
+4 reports empirical results and model comparisons. Section 5
+concludeswithadiscussionandimplicationsforpractice.
+2 Dataset and exploratory analysis
+2.1 The data
+The data used for this analysis were obtained from a large
+databaseoftheEthiopianInsuranceCorporation,oneofthebiggestinsurance companies in Ethiopia. The Ethiopian vehicle insurance
+dataset section provided a portion of the data. It consists of policy
+and claim information for individual-level vehicle insurance. Thedataset originally contains n=802,036 individual contracts,
+represented by the observations ( X
+1,Y1),...,(Xn,Yn) where X=
+(X1,...,Xp)∈Rpdenotesavectorof p=10predictors,and Y∈R
+denotestheresponsevariablerepresentingtheclaimsize.Thedata
+were corresponded to the period between July 2011and June 2018.
+The diﬀerent predictors used in the analysis are summarized inTable1.
+The terms, liability and comprehensive coverage in Table1are
+deﬁnedas:
+•Comprehensive coverage: The company covers all the lossesthat happen to the car whenever the conditions of theagreementaresatisﬁed.
+•Liability or third-party coverage: The car can cause damagetosomeoneorsomeone’sproperty.Ifthepolicyholderalreadyhas liability coverage in place, the insurance company covers
+the costs in this case. Liability amount, which a policyholder
+hastopayasapartofthepremium,isnationallyﬁxedalmosteveryyearforeachcartypeacrossalltheinsurancecompanies
+operating in the country. Liability cases are usually taken to
+court or settled through negotiation. However, the aﬀectedparty should not be either a family member or a relative of
+thepolicyholder.
+Computation of the premium, which is transformed to a
+logarithmicscaleintheanalysis,isdeterminedasafunctionof:
+•Insuredvalue,transformedtoalogarithmicscale.
+•Production year: For the ﬁrst 3 years, the age of the car is
+not considered, but after 3 years, the age loader computationtechnique, which takes into account the age of the vehicle,
+isapplied.
+•No claim discount (NCD): Upon the renewal of the contract
+after a year, a policyholder gets a 20% discount from the
+previous year’s premium and adjusted for inﬂation if the
+policyholder has not applied for a claim in that year. Thepolicyholder can get up to 60% of discount in consecutive
+years,butitisreducedbythevehicle’sage.
+•Contingency, Plant and Machinery (CPM): Applicable for
+those cars that are operated under diﬀerent circumstances.
+Frontiersin BigData 02 frontiersin.org
+--- PAGE 3 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+TABLE1 DescriptionofpredictorsinEthiopianvehicleinsurancedataset.
+S. No. Name Type Domain/Levels Description/representation
+1 Sex Categorical 0,1,2 0=legalentity,1=male,2=female
+2 Insurancetype Categorical 1201,1202,1204 1201=private,1202=commercial,1204=motortrade
+roadrisk
+3 Vehicletype Categorical pick-up,truck,bus,... Typeofvehiclegroupedintosixcategories
+4 Usage Categorical farepayingpassengers,taxi,generalcartage,... Ausualusageofthevehiclegroupedintosixcategories
+5 Make Categorical Toyota,Isuzu,Nissan,... Manufacturercompany
+6 Coverage Categorical comprehensive,liability Scopeoftheinsurance.
+7 Production
+yearInteger 1960–2018 Vehicle’sproductionyear
+8 Insuredvalue Continuous R+ Vehicle’spriceinUSD
+9 Premium Continuous R+ PremiumamountinUSD
+For instance, the premium for loader-type vehicles can be
+computed assuming they are at engineering (construction)
+sites; however, if the vehicle is involved in a road accident,
+the computation requires additional consideration, and themechanismdiﬀers.
+Somepredictors,suchascarryingcapacityandseatnumber,are
+removed from the dataset prior to analysis and modeling because
+theyarenotcodedcorrectly.
+2.2 Claim size variable
+Inouranalysis,theclaimsizeisacontinuousresponsevariable
+Y∈R. It is originally the amount in Ethiopian currency, the Birr,
+and it is converted to USD during data analysis. The distributionof the response variable Yis strongly zero-inﬂated, since about
+92.5% of contracts have no claim size. Thus, instead of visualizing
+andmodelingthisdistributiondirectly,weﬁrstselectthenon-zero
+observations.Giventhattheclaimhastobepaidforpolicyholder i,
+itisdeterminedas
+Y
+i=claimsize =Insuredvalue i
+Marketvalue i×Loss i, (1)
+where
+•Marketvalueisthemarketpriceofthecarwhenitwasbought.The insurer collects the market price for each car type almost
+every year. The data on the market value are taken eitherfromimportersorinformallyfromotherinstitutions.Itcanbe
+either more or less than the insured value. Knowing the car’s
+marketvaluehelpsadjusttheclaimamountsoitisnottoohighif the insured value is unreliable. In most cases, insured value
+andmarketvaluearethesame.
+•Loss: When an accident happens, the damaged vehicle is
+inspected by the engineering experts who work in the
+insurance company. These experts, known as server decision
+makers, examine each part of the vehicle, identify the aﬀectedparts,andproposeeitherreplacingorﬁxingthevehicle.Oncethe aﬀected parts have been identiﬁed, the server determinestheir price, and a bid to repair the damaged car is published.
+Including the server decision members, anyone who has a
+licensetodosocanusuallyparticipateinthebidcompetition.Thelossisdeterminedasfollows.
+In some cases, the amount of the claim may exceed either
+the insured value or the market price. It is mandatory to have at
+least liability insurance coverage for all vehicles under a country’s
+regulations, even if comprehensive insurance is for the vehicle’sowner’ssafety.Additionally,apolicyholdercanhaveBandit,Shifta,
+and Gorilla (BSG) and PassengersŠ legal liability (PLL) insurance
+coverage, but only if comprehensive coverage is secured ﬁrst. ThetermsBSGandPLLaredeﬁnedas:
+•Bandit, Shifta, and Gorilla (BSG): A contract agreement incase the car is robbed or stolen. To the best of the insurer’s
+knowledge,itisavehicleinsurancecomponentapplicableonly
+inEthiopia.
+•Passengers’ legal liability (PLL): This is applicable for fare-
+paying passengers, in case someone is aﬀected by an accident
+whileinthecar.Similartoliabilitycoverage,itsamountisﬁxedandpaidaspartofthepremium,andtheinsurerwouldpayup
+to40,000birrtoapassengerincaseofanaccident.
+EventhoughbothBSGandPLLinsurancecoveragedependon
+the interest of the policyholder and they are optional, applicable if
+andonlyifthecomprehensiveinsuranceagreementistotakeplaceorhasalreadytakenplace.
+The insured value in Equation1 does not include the values
+of liability, BSG, and PLL, even though they are includedin the contract. It contains only the value of comprehensive
+coverage. Thus, claim size can be larger than the insured
+valueif:
+•(total)loss+(liabilityinsurance)+(PLL) >insuredvalue,
+wheretotallossisanoveralllossofthecarduetoasevereaccident,
+and it is impossible to repair. In that case, the insurance company
+paysexactlytheinsuredvalueasaclaim.
+Frontiersin BigData 03 frontiersin.org
+--- PAGE 4 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+TABLE2 Datapre-processingsteps.
+Step Description
+Zeroclaims Observationswithzeroclaimamountswereremovedto
+focusonclaimseverityconditionalonclaimoccurrence
+Missingvalues Datawerecheckedformissingvalues;wherepresent,
+appropriateimputationmethodswereapplied
+Categorical
+variablesConvertedintodummyvariablesusingone-hotencodingpriortomodelﬁtting
+Train˝Utestsplit Datasetrandomlydividedinto70%trainingsetand30%testingsetforout-of-sampleevaluation
+Scaling Continuousvariableswereretainedonoriginalscale;scalingappliedonlywhererequiredformodelstability
+2.3 Data pre-processing
+The pre-processing steps are summarized in Table2and were
+appliedpriortomodelestimation.
+2.4 Exploratory data analysis
+Tomakeassumptionsaboutthedataandﬁndamodelthatﬁtsit
+best,itisimportanttocarryoutanexploratorydataanalysis(EDA),
+sinceithasasigniﬁcantroleinlettingthedataspeakforthemselves
+prior to or as part of a formal analysis. It allows the researcher
+to inﬂuence and criticize an intended analysis. Additionally, EDAtechniques may reveal additional information that may not be
+directly related to the research question. For example, EDA could
+suggest fruitful new lines of research ( Maindonald and Braun,
+2010).
+The purpose of statistical graphics is to provide visual
+representations of quantitative and qualitative information. Asa methodological tool, statistical graphics comprises a set of
+strategies and techniques that provide researchers with important
+insights about the data under examination and help guide thesubsequentstepsoftheresearchprocess.Theobjectivesofgraphical
+methods are to explore and summarize the contents of large and
+complicated datasets, address questions about the variables in ananalysis (for example, the distributional shapes, ranges, typical
+values, and unusual observations), reveal structure and pattern in
+the data, check assumptions in statistical models, and facilitategreater interaction between the researcher and the data. Various
+graphical methods were examined to visualize data in raw and
+amalgamatedformats.
+The most widely recognized graphical tool to display and
+examine the frequency distribution and the density of a singlecontinuousvariableisthehistogram.
+Another common tool to visualize the observed distribution
+of data is to plot a smoothed histogram, commonly referredto as an empirical density, with the blue curve superimposedon the histogram in Figure1. In constructing the histogram,
+the bin width was selected using the Freedman ˝UDiaconis rule,
+which adapts the number of bins to both the sample size andthe variability of the data, thereby reducing the arbitrariness in0.00.20.40.6
+12345
+Claim sizedensity
+6
+FIGURE1
+Frequency histogram and superimposed density plot representations
+of the natural logarithm of the claim size distribution. The
+distribution of the response variable Yis strongly zero-inﬂated, since
+only about 7.5 %of the contracts have a non-zero claim payment.
+Thus, in our analysis, instead of visualizing and modeling this
+distribution directly, we consider only policyholders who have ever
+received a positive claim.
+bin selection (Freedman and Diaconis, 1981). The histogram was
+scaled so that the total area equals 1, allowing direct comparisonwith probability density functions. However, histograms can be
+sensitivetothechoiceofbinwidthandbinboundaries,whichmay
+substantially aﬀect their shape. To address this limitation, we alsopresent the empirical density, estimated using a kernel smoothing
+method (Silverman, 1986). Unlike histograms, kernel density
+estimationprovidesacontinuousapproximationoftheunderlyingdistribution, oﬀering a smoother, more stable visualization of the
+data’sdistributionalcharacteristics.
+2.5 Exploring relationships between
+covariates and claim size
+Relationshipsbetweenthepredictorsandtheresponsevariable
+can be depicted by graphical methods. Side-by-side boxplots
+are one way of graphically displaying the relationship between
+qualitative and quantitative variables. It is an excellent toolfor conveying location and variation information in datasets,
+particularly for detecting and illustrating changes in location and
+variationacrossdiﬀerentgroupsofdata.
+The boxplots of claim size against the diﬀerent qualitative
+predictors are shown in Figure2. Several predictors exhibit
+noticeable heterogeneity across their categories. For instance, inthe boxplots of the log of claim size against sex, clear diﬀerences
+appear among the three groups of sex. Male policyholders tend to
+have higher claim payments than either their female counterpartsor legal entities. Similarly, diﬀerences in claim size are observed
+Frontiersin BigData 04 frontiersin.org
+--- PAGE 5 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+Usage Vehicle typeMake SexCoverage Insurance type
+Private OthersFPP
+G.Cartage
+O.Goods O.serviceAutomobileBus
+OthersPick−up
+St.WagonesTruckOthersBishoftuIsuzu IvecoNissan Toyota
+Legal entityMale
+Femalecomprehensiveliability Private
+Commercial23456
+23456
+23456Claim size
+FIGURE2
+Boxplots of the natural logarithm of claim size against qualitative predictors.
+in vehicle usage, with vehicles used for general cartage showing
+the highest claim payments, followed by vehicles carrying fare-paying passengers. Moreover, vehicles manufactured by Isuzu and
+Ivecotendtoincurhigherclaimpaymentsthanthoseproducedby
+other companies, consistent with the insurerŠs prior identiﬁcationofthesebrandsasrelativelyrisky.Diﬀerencesacrossgroupsarealso
+evidentinothercovariatessuchasvehicletype,insurancetype,and
+insurancecoverage.
+Boxplots are not only eﬀective for visualizing group-wise
+diﬀerencesbutalsoforassessingthespreadanddetectingpotentialoutliers in the data. Given the large sample size in this dataset,the appearance of a considerable number of outliers is statisticallyexpected since larger samples naturally increase the probability ofobserving extreme values. In this context, the relative frequency
+of outside values in the boxplots does not necessarily imply
+data quality issues or true anomalies but reﬂects the inherentvariabilityinlargeinsuranceclaimdatasets.Thisisconsistentwith
+the statistical property that, even under a normal distribution,
+approximately 0.7% of values are expected to fall outside thewhiskersofaboxplot(beyond1.5× interquartilerange[IQR]).
+In our data, the relative proportion of outside values ranged
+from 0 to 2.8%. Comparing these proportions with what would be
+Frontiersin BigData 05 frontiersin.org
+--- PAGE 6 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+expected from a comparable normal or Tweedie-like distribution,
+the observed deviations are within plausible probabilistic bounds.This indicates that the data are consistent with the heavy-tailed
+nature commonly observed in claim amounts, in which extreme
+but valid observations occur more frequently than under a purelynormal model. Hence, while the presence of numerous external
+values highlights heterogeneity and heavy-tailed behavior in claim
+payments, it also reaﬃrms the appropriateness of using ﬂexiblemodels,suchastheTweedieGLM,forsuchdata.
+Additionally, examining group-speciﬁc variability shows that
+claim payments for male policyholders are more dispersed thanthose for females or legal entities. Vehicles used for general
+cartage and fare-paying passengers also show wider spreads than
+those in other categories. Likewise, heterogeneity in variance isobserved across groups deﬁned by insurance coverage, insurance
+type,manufacturercompany,andvehicletype,reﬂectingstructural
+diﬀerencesinclaimriskproﬁlesacrossthesefactors.
+Analogous to boxplots, Scatterplots are an obvious way to
+visualize a relationship between two quantitative variables that arenumerically comparable. They are useful as a preliminary stepbeforeperformingaregressionanalysis.
+Figure3 shows that scatterplots are a bivariate relationship
+between claim size and quantitative predictors. It is diﬃcult todetect clear trends in any of the plots. However, when stratifying
+by usage predictor groups, we observe diﬀerences in claim size
+acrossgroups.
+In addition to the scatterplot matrix seen in Figure3,w e
+computed correlation coeﬃcients between claim size and insuredvalue, premium, and production year as 0.22, 0.33, and 0.11,respectively. Even though none of the coeﬃcients between claim
+size and the covariates are considered to be strong, there are
+some notable associations. For instance, claim size appears tohave a moderate positive correlation with insured value, premium,
+and production year, meaning that as vehicles’ insured value,
+premium,andproductionyearincrease,theirclaimpaymentstendto increase as well. Correlation coeﬃcient-based relationships are
+usuallyteasedoutmoreclearlywhenbuildingthe(ﬁnal)model.
+The loess curves drawn on top of the scatterplots indicate a
+possibly non-linear relationship between the two variables. Thecurvesforclaimsizeagainstinsuredvalueandpremiumareupside-
+down U-shaped, peaking around the middle of the insured valueand premium ranges for most groups of usage predictors. This
+means that vehicles with moderate insured value and/or moderate
+premium have larger claim sizes than those with lower and higherinsured value and/or premium. Because this trend is non-linear,
+this ﬁnding could not have been inferred from the correlations
+alone. In contrast, when we consider the private group of usagepredictors, the relationship between claim size and insured value
+appearslinear,withapositiveslope.
+3 Statistical methods
+3.1 Tweedie family
+TheTweediefamilyofdistributionsbelongstotheexponential
+dispersion family (EDF) and provides a ﬂexible framework formodeling non-negative and right-skewed data ( Jørgensen, 1997;
+Dunn and Smyth, 2005). The probability density function of a
+Tweedie-distributedrandomvariable Yisgivenby:
+f(y;μ,φ,p)=a(y,φ,p)exp/bracketleftbigg1
+φ/parenleftbigg
+yμ1−p
+1−p−μ2−p
+2−p/parenrightbigg/bracketrightbigg
+,
+fory>0,where μisthemean, φ>0isthedispersionparameter,
+pis the power parameter, and a(y,φ,p) is a normalizing constant
+ensuringthedensityintegratestoone.
+The variance ˝Umean relationship of the Tweedie family is
+deﬁnedas:
+Var(Y)=φμp.
+Diﬀerentvaluesof pyieldwell-knownspecialcases:
+⎧
+⎪⎪⎪⎨
+⎪⎪⎪⎩p=0 Normaldistribution,
+p=1 Poissondistribution,
+p=2 Gammadistribution,
+p=3 InverseGaussiandistribution.
+(Jørgensen,1987; SmythandJørgensen,2002).
+For p∈(1,2), the Tweedie distribution corresponds to a
+compound Poisson-Gamma model frequently used in frequency-
+severity modeling. However, in the present study, the analysis is
+restricted to strictly positive claim sizes. Therefore, the compound
+Poisson interpretation is not invoked. Instead, we use the Tweediefamily as a ﬂexible parametric class for continuous, positive, and
+heteroscedasticdata(DunnandSmyth,2008).
+When p>2, the distribution behaves similarly to Gamma
+and inverse Gaussian models while allowing a more ﬂexiblevariance˝Umean relationship. This ﬂexibility makes it suitable as a
+benchmark model for heavy-tailed insurance claim severity data
+(DunnandSmyth,2008).
+3.1.1 Conditional severity modeling framework
+The original portfolio exhibits substantial zero inﬂation
+(approximately 92.5% zero claims). To ensure coherence betweenthe distributional assumption and the modeling objective, the
+analysisisconductedwithinaconditionalseverityframework:
+Y
+i|(Yi>0)
+Thus, the response variable consists exclusively of strictly
+positive claim size, and the model estimates the conditional mean
+severity rather than the unconditional loss distribution. Thisdistinctionisimportant,asthemodeldoesnotattempttorepresent
+claimfrequencyorcompoundlossprocesses.
+3.1.2 Model speciﬁcation
+A Tweedie generalized linear model (GLM) with log-link
+functionwasﬁtted:
+Frontiersin BigData 06 frontiersin.org
+--- PAGE 7 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+Insured value Premium Production year
+345 1.0 1.5 2.0 2.5 3.0 3.5 1980 1990 2000 2010 202023456
+ValueClaim sizeusage
+FPP
+G.CartageO.GoodsO.serviceOthersPrivate
+FIGURE3
+Scatterplots matrix: a bivariate proﬁling of relationships between claim size and quantitative predictors.
+log(μ i)=Xiβ,
+where:
+μi=Yi|(Yi>0).
+Xiis the vector of explanatory variables and βis the vector of
+regression coeﬃcients. The log-link ensures that predicted claim
+severities are positive and allows multiplicative interpretation ofcovariateeﬀects.
+Thepowerparameter pwasselectedempiricallyviagridsearch
+over plausible values p∈[2,3], guided by residual diagnostics
+and out-of-sample predictive performance. The selected value
+(approximately p=2.5) reﬂects the heavy-tailed, heteroscedastic
+natureofthepositiveclaimseveritydata.
+Model adequacy was evaluated using residual analysis and
+informationcriteria.Predictiveperformancewasassessedusingthe
+rootmeansquareerror(RMSE)ontheheld-outtestdataset.
+3.2 Review of machine learning methods
+Machine learning (ML) is now well established in many areas.
+Incontrasttothestatisticalmodelingapproach,MLalgorithmsdo
+not assume any speciﬁc model structure for the data. ML methods
+capture the underlying structure of data and are therefore moreeﬃcientinhandlinglargedatawitharbitrarydegreesofcomplexity.
+OnemajortaskofMListoconstructgoodmodelsfromdatasets.
+Among ML algorithms, ensemble methods are a common
+choice for analyzing large and complex datasets. Originallydeveloped to reduce variance—thereby improving the accuracy
+of automated decision-making systems—ensemble methods have
+since been successfully applied to a variety of problems (Zhang
+and Ma, 2012), such as predictor selection, class-imbalanced data,conﬁdenceestimation,anderrorcorrection.
+Themainideaoftheensemblemethodologyistoweighseveral
+individual learners and combine them to obtain a learner thatoutperforms most of them. In fact, combining learner outputs
+does not necessarily lead to performance that is guaranteed to be
+better than the best learner in the ensemble. Rather, it reducesthelikelihoodofrelyingonapoorlyperforminglearner.Ensemble
+methodsmimictheideaofseekingseveralopinionsbeforemaking
+a crucial decision: individual opinions are weighted and combinedtoreachtheﬁnaldecision(Polikar,2006).
+A general principle of ensemble methods is to construct a
+linearcombinationofsomemodel-ﬁttingmethod,insteadofusinga single ﬁt, to improve predictive performance. More precisely,
+consideranestimationofareal-valuedfunction
+f
+:Rp→R
+based on data (x i,yi),i=1,...,n, where xis ap-dimensional
+predictor variable and yis a univariate response. We may then
+generalizetofunctions f(x)andotherdatatypes.
+Givensomeinputdata,welearnseveralfunctions ˆf1,ˆf2,...,ˆfB,
+called learners, by reweighting the input data. We can thenconstruct an ensemble-based estimate ˆf
+ens(x) by taking linear
+combinations of the individual learners as an additive expansion
+(Elish,2009):
+ˆfens(x)=B/summationdisplay
+i=1wiˆfi(x), (2)
+Frontiersin BigData 07 frontiersin.org
+--- PAGE 8 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+where the ˆfi(x) are estimates obtained from the ith reweighted
+datasetand wiarethelinearcombinationcoeﬃcients.Forinstance,
+wi=1/Bin bagging (see Section 3.2.1) and boosting (see
+Section3.2.3).
+In this study, three ensemble learning algorithms—bagging,
+random forest, and boosting—are considered. For model
+performance comparison, two non-ensemble learning techniques,
+namely, ordinary linear regression and decision trees, are also
+applied to an Ethiopian vehicle insurance dataset to predictclaimsize.
+3.2.1 Bagging
+Bagging (Breiman, 1996), short for bootstrap aggregating,
+is an ensemble method for improving unstable estimation orclassiﬁcation schemes. The two key ingredients of Bagging arebootstrapandaggregation.
+Baggingusesthebootstrapdistributionforgeneratingdiﬀerent
+learners. Speciﬁcally, it applies bootstrap sampling ( Efron and
+Tibshirani,1993)toobtainsubsetsofthedatafortraining.Givenan
+originaldataset,anewdatasetcontaining ntrainingobservationsis
+generated by sampling with replacement. Some observations may
+appearmultipletimes,whileothersmaybeabsent.Byrepeatingthis
+Btimes, Bbootstrapsamplesareobtained.Alearneristhentrained
+oneachsample.
+Bagging adopts standard strategies for aggregating learners’
+outputs: voting for classiﬁcation and averaging for regression. To
+predict a test instance in regression, Bagging feeds the instance toits learners, collects their outputs, and averages them. Formally, a
+learnerˆf
+i(x)isﬁttedoneachofthe Bbootstrappedsamples,andthe
+averagepredictioniscomputedas:
+ˆfavg(x)=1
+BB/summationdisplay
+i=1ˆfi(x),
+resultinginasinglelow-variancelearner.
+Mathematically,baggingcanbeviewedasreducingthevariance
+componentofthepredictionerrordecomposition:
+MSE(x)=Bias[ˆf(x)]2+Var[ˆf(x)]+σ2.
+By averaging over multiple bootstrapped models, the expected
+variance term Var[ ˆf(x)] decreases approximately in proportion to
+1/B,leadingtoimprovedgeneralization.
+3.2.2 Random forest
+Random Forest (RF) is a state-of-the-art ensemble method
+developed by Breiman and Cutler (2008), and it has become a
+widely used technique in data science ( Dangeti, 2017). It is an
+extension of Bagging, with the key innovation being randomized
+predictor selection. During the construction of a decision tree, RFrandomly selects a subset of predictors at each split, and the best
+splitisthenchosenfromthissubset.
+RF reduces the variance of individual trees by aggregating
+many trees. Approximately one-third of the training samples areexcludedfromeachbootstrapsample;thesearecalled“out-of-bag”
+(OOB) samples. Predictions on OOB samples provide an internalerror estimate. For regression, the ﬁnal prediction is the average
+of predictions across trees, while for classiﬁcation it is the majority
+voteoraveragepredictedprobability(JonesandLinder,2016).
+Formally,if ˆf
+b(x)isthepredictionfromthe bthtreetrainedwith
+randomfeaturesubset /Theta1b,theRFpredictorisgivenby:
+ˆfRF(x)=1
+BB/summationdisplay
+b=1ˆfb(x;/Theta1b).
+The randomization of /Theta1bensures the decorrelation of trees,
+therebyreducingtheensemblevariancewhilemaintaininglowbias.Theoretical analysis shows that the generalization error converges
+as the number of trees B→∞, provided each tree has a positive
+marginoverrandomguessing.
+3.2.3 Gradient boosting
+Boosting algorithms were introduced in ML by Schapire
+(1990)andFreund (1995). The term “boosting” refers to
+a family of algorithms that convert weak learners (slightlybetter than random guessing) into strong learners (close to
+perfect performance). The method sequentially ﬁts a seriesof models, each correcting errors of its predecessor, and
+combines them into an ensemble with improved performance
+(Schapire, 1999). This approach is closely related to additivemodels and maximum likelihood estimation ( Friedman et al.,
+2000).
+Unlike bagging, which is a parallel ensemble
+method, boosting is sequential. The weights w
+iin
+Equation2 depend on the functions previously ﬁtted
+ˆf1,...,ˆfi−1. Boosting does not rely on bootstrap sampling;
+instead, each tree is trained on a modiﬁed version of
+thedata.
+A widely used boosting algorithm is AdaBoost (Freund
+and Schapire, 1996 ), which has been shown to be very
+eﬀective in classiﬁcation. For regression, gradient boosting
+has been proposed (Friedman, 2001, 2002). In this
+article, we rely on the gradient boosting algorithm of
+Chen and Guestrin (2016) , which uses regression trees
+as basis functions and optimizes the following regularized
+objectivefunction:
+L(φ)=/summationdisplay
+il(ˆyi,yi)+/summationdisplay
+b/Omega1(fb),/Omega1(fb)=γT+1
+2λ/bardblw/bardbl2,
+where lis a diﬀerentiable convex loss function
+measuring the diﬀerence between the prediction
+ˆyiand the true response yi, and /Omega1penalizes
+the complexity of the model. The regularization
+term helps smooth the learned weights and
+preventsoverﬁtting.
+At each iteration m, a new weak learner hm(x) is ﬁtted to
+the negative gradient of the loss function with respect to thecurrentmodel:
+r
+im=−/bracketleftbigg∂L(yi,f(xi))
+∂f(xi)/bracketrightbigg
+f(x)=fm−1(x).
+Frontiersin BigData 08 frontiersin.org
+--- PAGE 9 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+TABLE3 ModelcomparisonofTweedieGLMswithvaryingpowerparameters.
+Power (p) Dispersion Null deviance Residual
+devianceAIC RMSE
+1.9 0.0188876 1,221.3151 1,003.6565 10,484,265 395,282.5
+2.0 0.0148749 961.0064 789.8181 7,680,744 395,295.0
+2.5 0.0045084 290.1592 238.6310 1,448,798 395,358.0
+3.0 0.0013674 87.7479 72.2332 1,520,157 395,421.9
+4.0 0.0001261 8.0628 6.6550 1,794,009 395,552.6
+5.0 0.0000117 0.7455 0.6176 1,940,867 395,687.6
+Themodelisthenupdatedas:
+fm(x)=fm−1(x)+ν·hm(x),
+where ν∈(0,1) is the learning rate controlling the contribution
+ofeachweaklearner.Thisadditiveoptimizationprocesseﬀectively
+performs a gradient descent in function space, minimizing theempiricalrisk:
+ˆf=argmin
+f∈Fn/summationdisplay
+i=1L(yi,f(xi)).
+Thus, boosting reduces both bias and variance by iteratively
+reﬁning weak learners toward the global minimum of thelossfunction.
+Boosted regression trees combine the advantages of tree-
+based models with improved predictive accuracy ( Friedman and
+Meulman,2003).
+3.2.4 Model training and hyper-parameter tuning
+To ensure reproducibility and fair comparison, all machine
+learningmodelsweretrainedusingthesametrainingdataset(70%)and evaluated on a hold-out test dataset (30%). Hyperparameters
+were selected using a grid search with 5-fold cross-validation
+based on the minimum validation RMSE. For the random forestmodel,thenumberoftrees(ntree=300–800),numberofvariables
+randomly selected at each split (mtry = 3–8), and maximum
+tree depth (5–20) were tuned. For bagging, the primary tuningparameter was the number of trees (200–800). For gradient
+boostingandXGBoostmodels,thelearningrate(0.01–0.1),number
+of trees (200–600), maximum depth (3–8), and subsampling ratio(0.6–1.0) were optimized using grid search with cross-validation.
+Categorical predictorswere convertedinto dummyvariables using
+one-hotencodingpriortomodelﬁtting.Continuousvariableswereretained on their original scale unless transformation improved
+numerical stability. All models were implemented in R using
+standard machine learning libraries. Final model performance wasevaluatedusingout-of-sampleRMSEcomputedonthetestdataset
+toensureunbiasedpredictivecomparison.4 Application
+4.1 Tweedie model
+The Tweedie regression model was applied to the insurance
+dataset to model claim severity conditional on claim occurrence.
+As described in the data preprocessing stage, the original datasetcontained a large proportion of zero claims. Since the objective
+of this study is to evaluate predictive performance for positive
+claim amounts, all zero-claim observations were excluded prior tomodeling. Consequently, the response variable claim size consists
+only of strictly positive continuous claim values. Within this
+conditional severity framework, the Tweedie generalized linearmodel(GLM)providesaﬂexibleparametricapproachformodeling
+skewed and heteroscedastic positive claim data. Although the
+Tweediefamilyisoftenusedinactuarialapplicationsforcompoundfrequency ˝Useverity modeling, in this study, it is employed as
+a benchmark model for positive claim severity to facilitatecomparison with machine learning approaches. A sequence ofTweedie GLMs was ﬁtted for a range of power parameters p=
+(1.9,2,2.5,3,4,5)toexaminesensitivityandmodelstability.Foreachﬁtted model, dispersion, null deviance, residual deviance, AkaikeInformation Criterion (AIC), and root mean square error (RMSE)
+werecomputedtoassessmodelﬁtandpredictiveperformance.
+Although RMSE values remained nearly constant across
+models,indicatingstablepredictiveperformance,thedevianceandAIC values showed substantial improvement around p=2.0 to
+p=2.5.Hence,themodelwith p=2.5wasselectedastheoptimal
+Tweediemodelforthisdataset(Table3).
+Table4presents the estimated coeﬃcients from the optimal
+Tweedie regression model with p=2.5, applied to insurance
+claimdata.Thepositiveintercept( ˆβ
+0=2.258)reﬂectsthebaseline
+log-claimamountwhenallpredictorsareattheirreferencelevels.
+Sex and insurance type were signiﬁcant predictors of claim
+amounts. Male policyholders were associated with slightly higherexpected claims compared to females, while commercial insurance
+holders tended to ﬁle higher claims than those with otherinsurancetypes.
+Vehiclecharacteristicsalsoplayedasubstantialrole.Compared
+tothereferencecategory,stationwagonsandbusesexhibitedhigheraverage claim amounts, while pick-ups and trucks were associated
+with lower claims, indicating possible diﬀerences in vehicle risk
+exposureandusageintensity.
+Frontiersin BigData 09 frontiersin.org
+--- PAGE 10 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+TABLE4 ResultsoftheTweedieregressionmodel( p=2.5)appliedtoinsuranceclaimdata.
+Variable Estimate Standard
+errort-
+valuep-
+value
+(Intercept) 2.258 0.160 14.115 <2e-16
+Sex(male) 0.0362 0.0016 21.964 <2e-16
+Sex(female) 0.0296 0.0024 12.421 <2e-16
+Insurancetype
+(commercial)0.0249 0.0067 3.747 0.000179
+Insurancetype(bus) –0.0060 0.0052 –1.156 0.247
+Insurancetype(others) 0.0026 0.0051 0.518 0.605
+Insurancetype(pick-up) –0.0428 0.0060 –7.090 1.36e-12
+Insurancetype(stationwagon)0.0140 0.0023 6.205 5.49e-10
+Insurancetype
+(truck)–0.0281 0.0060 –4.687 2.78e-06
+Usage(Goods
+cartage)0.0499 0.0048 10.409 <2e-16
+Usage(Other
+goods)0.0157 0.0053 2.963 0.00305
+Usage(Other
+service)–0.0388 0.0028 –14.085 <2e-16
+Usage (others) –0.0414 0.0040 –10.412 <2e-16
+Usage(private) –0.0364 0.0080 –4.530 5.91e-06
+Make(Isuzu) 0.0300 0.0036 8.230 <2e-16
+Make(Iveco) 0.0134 0.0044 3.075 0.00211
+Make(Nissan) 0.0281 0.0037 7.644 2.14e-14
+Make(others) 0.0222 0.0031 7.039 1.96e-12
+Make(Toyota) 0.0311 0.0031 10.148 <2e-16
+coverage
+(liability)–0.0897 0.0021 –43.650 <2e-16
+Productionyear 0.000037 0.000079 0.468 0.640
+Insuredvalue –6.55e-09 1.13e-09 –5.779 7.56e-09
+Premium 1.17e-06 7.50e-08 15.560 <2e-16
+Vehicle usage types such as “Goods Cartage” and “Other
+Goods” were associated with higher claim costs, suggesting that
+vehicles used for goods transport are more likely to result in
+larger or more frequent claims. In contrast, vehicles categorizedunder “Private” and “Other Services” showed signiﬁcantly lower
+claim magnitudes, indicating reduced exposure to high-risk
+drivingenvironments.
+Similarly, vehicle make was a strong determinant of claim
+size. Vehicles manufactured by Toyota, Isuzu, Nissan, and similarbrands exhibited signiﬁcantly higher expected claim amounts,potentiallyduetohigherreplacementandrepaircosts.Among the continuous variables, the premium amount was
+positively associated with claim size, suggesting that higherpremiums correspond to larger expected claims. Conversely,
+insured value showed a small but statistically signiﬁcant negative
+relationship, possibly due to conservative claim behavior amongholdersofhigh-valuevehicles.
+Overall, most covariates were highly signiﬁcant ( p<
+0.001), conﬁrming that the Tweedie GLM eﬀectively capturesthe variability in insurance claim amounts. The stable RMSE
+across models and the meaningful directionality of eﬀects
+further conﬁrm the model’s reliability and robustness for mixeddiscrete˝Ucontinuousinsurancedata.
+4.2 Machine learning methods
+4.2.1 Variable importance
+Our goal is not only to ﬁnd the most accurate model of the
+response, but also to identify which of the predictor variables
+are most important to make the predictions. For this reason, we
+perform variable importance. The ensemble methods algorithmestimates the importance of, for instance, x
+jpredictor variable by
+looking at how much prediction error increases over the baselineerror, when the OOB sample for x
+jpredictor is permuted while
+all others are left unchanged. The most commonly used variable
+importancemeasureisthepermutationimportance,introducedby
+Breiman (2001), which suggests that the variable importance ofpredictor x
+jisthediﬀerenceinpredictionaccuracyafterandbefore
+permuting xjaveraged over all trees. More precisely, the variable
+importanceofpredictor xjisdeﬁnedas
+VI(x j)=1
+BB/summationdisplay
+i=1VI/parenleftbig
+xj/parenrightbig
+i(3)
+where VI/parenleftbig
+xj/parenrightbig
+i=/parenleftBig
+RMSExj
+i−RMSE0
+i/parenrightBig
+, and RMSExj
+irepresenting
+the RMSE value for the ithmodel in the ensemble ﬁtted from the
+dataset with a random permutation applied to the covariate xj,
+and RMSE0iis the RMSE value for this model ﬁtted to the original
+dataset. Note that VI/parenleftbig
+xj/parenrightbig
+i=0, if variable xjis not in the ith
+model.Therawvariableimportancescoreforeachvariableisthen
+computedasthemeanimportanceoveralltrees.Infact,VI( xj)can
+be computed depending on any other performance measure, such
+asthecoeﬃcientofdetermination, R2.
+Let x1,...,xpbe the features of interest and let RMSE 0
+be the baseline performance metric for the trained model. Thepermutation-basedvariableimportancescorescanbecomputedas
+shownin Algorithm1.
+Figure4displays the importance predictor while growing the
+trees. Accordingly, in all three models, premium is the mostcrucial predictor, followed by the insured value. The second
+most inﬂuential (slightly equally in bagging and random forest)predictors are usage and sex, followed by production year, in line
+withtheearlierboxplotsexploratoryanalysis.
+Figure4 is obtained by repeating the permutation of each
+variable20timesandtheresultsareaveragedtogether.Thishelpsto
+Frontiersin BigData 10 frontiersin.org
+--- PAGE 11 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+providemorestableVIscores,andalsotheopportunitytomeasure
+theirvariabilityasseenin Figure5,sincethepermutationapproach
+introducesrandomnessintotheprocedure.
+4.2.2 Partial dependence plots
+Though determining predictor importance is a crucial task in
+any supervised learning problem, ranking variables is only part of
+the story, and once the important predictors are identiﬁed, it is
+often necessary to assess the relationship between the predictorsand the response variable. The task is often accomplished by
+constructing partial dependence plots (PDP) (Friedman, 2001),
+which helps to visualize the relationship between a predictor andthe response variable while accounting for the average eﬀect of the
+otherpredictorsinthemodel.
+1:For j∈{1, 2, ...,p};
+(a) Permute the values of feature xiin the
+training data.
+(b) Recompute the performance metric on the
+permuted data, RMSE.
+(c) Record the difference from baseline using
+Equation 3.
+2:Return the variable importance scores
+VI(x 1),..., VI(x p).
+Algorithm1. Permutation-basedvariableimportancecomputation.Letˆybe a prediction function from an arbitrary model using a
+dataset, D=/braceleftbig
+(xi,j,yi)/bracerightbig
+fori=1,...,nandj=1,...,p.Themodel
+generatespredictionsoftheform:
+ˆyi=f/parenleftbig
+xi,1,xi,2,...,xi,p/parenrightbig
+,
+forsomefunction f(...).
+Letxkbe a single predictor of interest with unique values/parenleftbig
+x1,k,x2,k,...,xn,k/parenrightbig
+.Thenthepartialdependenceplotsareobtained
+by computing the following average and plotting it over a useful
+rangeof xvalues:
+¯fk(x)=1
+nn/summationdisplay
+j=1ˆf/parenleftbig
+x1,j,...,xk−1, j,x,xk+1, j,...,xp,j/parenrightbig
+(4)
+The function ¯fk(x) indicates how the value of the variable
+xkinﬂuences the model predictions/braceleftbig
+yj/bracerightbig
+after we have
+averaged out the inﬂuence of all other variables. The partial
+dependence of the response on xkcan be constructed as
+Algorithm2:
+SinceAlgorithm2 can be quite computationally intensive as it
+involves npasses over the training records, a reduced number of
+points is used by equally spacing the values in the range of thevariableofinterest.
+Figure6 shows a separate partial dependency function
+for each group of usage predictors. Because one-way partialdependency plots display one predictor at a time, theyare valid only if the predictor of interest does not interact
+strongly with other predictors. However, interactions are
+common in actual practice; in these cases, we can use higher
+Bagging Random Forest Boosting
+0.0 0.1 0.2 0.0 0.1 0.2 0.0 0.1 0.2CoverageInsurance typeMakeVehicle typeSexProduction yearUsageInsured valuePremium
+Importance
+FIGURE4
+A graphical representation of average variable importance across all the trees from Bagging, boosting, and regression RF. The larger the number, the
+bigger the effect.
+Frontiersin BigData 11 frontiersin.org
+--- PAGE 12 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+Bagging Random Forest
+0.0 0.1 0.2 0.3 0.05 0.10 0.15CoverageVehicle typeInsurance typeInsured valueMakePremiumProduction yearSexUsage
+CoverageVehicle typeInsurance typeInsured valueMakePremiumProduction yearSexUsage
+ImportanceVariable
+FIGURE5
+Boxplots of variable importance from Bagging and regression random forest from 20 times repeated permutation.
+1:For j∈{1, 2, ...,n};
+(a) Replace the original training values of xk
+with the constant xk,j.
+(b) Compute vector of predicted values,/braceleftbigˆyj/bracerightbig
+from the modified version of the training
+data.
+(c) Compute the average prediction according to
+Equation 4 to obtain¯fk(xk,j).
+2:Plot the pairs of/braceleftBig
+xk,j,¯fk(xk,j)/bracerightBig
+for j=1, 2, ...,n
+Algorithm2. Partialdependenceconstructionoftheresponseonasingle
+predictor xk.
+order (such as two- and three-way) partial dependence
+plots to check for interactions among predictors. Forexample, Figure6 shows an interaction between premium
+andusagepredictors.
+The two-way plot shows that vehicles used for general cartage
+with a high premium (more than 2 in ensemble methods) have
+much higher expected claim sizes than vehicles with other usages.
+This interaction would not have been apparent in the one-wayplot.4.3 Methods comparison
+In this application, the predictor variable is represented by
+a collection of quantitative and qualitative attributes of the
+vehicle, and the response is the actual claim size. Given a
+collection of Nobservations/braceleftbig
+(xi,yi);i=1,...,N/bracerightbig
+of known
+(x,y) values, the goal is to use this data to obtain an estimate
+of the function that maps the predictor vector xto the values
+of the response variable y. This function can then be used to
+make predictions for observations in which only the xvalues
+are observed. Formally, we wish to learn a prediction functionx/mapsto→ˆf(x) that minimizes the expectation of some loss
+function
+L(ˆf(x),y) over the joint distribution of all ( x,y) values,
+thatis,
+ˆf(x)=arg min f(x)E/bracketleftbig
+L(f(x),Y)|X=x/bracketrightbig
+.
+In ﬁnite samples, we evaluate the performance of ˆfwith the
+meansquareerror(MSE),thatis,
+MSE=1
+n/primen/prime/summationdisplay
+i=1/parenleftBig
+ˆf(xi)−yi/parenrightBig2
+whereˆf(x) is a ﬁtted regression function in the test dataset {xi}n/prime
+i=1
+andyistheobservedresponsevariable.
+Frontiersin BigData 12 frontiersin.org
+--- PAGE 13 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+OLS Random ForestBagging Boosting
+123 1232.63.03.4
+2.63.03.4
+PremiumPredicted claim sizeUsage
+FPP
+G.CartageO.GoodsO.ServiceOthersPrivate
+FIGURE6
+Two-way partial dependence plots; the marginal effect of premium on the claim size for different groups of usage predictor after integrating out the
+other variables.
+TABLE5 PredictiveperformancecomparisonbasedonRMSEvalues.
+ModelTweedie
+(p= 2.5)Random
+forestBagging Boosting OLS
+RMSE 663.9 656.1 657.5 658.6 662.9
+For statistical modeling purposes, we ﬁrst partitioned the
+data into train (70%) and test (30%) datasets. The train set was
+used for exploratory data analysis, model training, and selection,
+and the test set was used to assess the predictive accuracy of
+the selected method. The training data goes from 2011 to 2015and from 2017 to 2018, while the test data is observations
+from2016.
+Table5presents the predictive accuracy of the ﬁve models
+based on their root mean square error (RMSE) values. TheRandom Forest modelachievedthelowestRMSE(656.1),indicating
+slightlysuperiorpredictiveaccuracycomparedtotheothermodels.
+In contrast, the Tweedieregression recorded the highest RMSE
+(663.9), suggesting relatively weaker predictive power. Overall,the results imply that the ensemble learning methods oﬀeredonly marginal improvements over the Tweedie model, reﬂecting
+limitednon-linearityandinteractioneﬀectsinthevehicleinsurance
+claimdata.
+Regarding the performance of the methods, it can be
+clearly seen in Figure7 that the ordinary least squares (OLS)
+method is predicting all the claims less than USD 10
+4even
+though some observed claims are even larger than USD 105.
+However, in the case of ensemble methods, they could predict
+claim size beyond 104. Both OLS and ensemble methods
+underestimated high claim size, but the underestimation is higherinOLS.5 Discussion and conclusions
+This study provided a structured comparative evaluation
+of classical statistical models and modern ensemble learning
+techniques for predicting vehicle insurance claim severity. Rather
+than introducing a novel methodological framework, the primaryobjective was to assess the predictive performance, stability, and
+interpretability of established statistical and machine learning
+approaches when applied to real-world insurance data within aconditionalseveritysetting.
+The analysis was conducted on strictly positive claim size,
+thereby focusing on conditional mean severity rather than thefull frequency ˝Useverity process. This distinction is important
+when interpreting the role of parametric distributions such as theTweedie model, which was employed here as a ﬂexible benchmarkfor positive and heteroscedastic claim data rather than as a
+compoundlossmodel.
+Empirical results indicate that ensemble learning methods–
+bagging, random forest, and gradient boosting–achieved slightlylower RMSE values than ordinary least squares (OLS) and the
+Tweedie generalized linear model. However, the magnitude ofimprovement was modest, and performance diﬀerences among
+the ensemble techniques themselves were relatively small. These
+ﬁndings suggest that while machine learning methods can capturenon-linearities and interactions, the underlying dataset structure
+may not exhibit suﬃciently strong complexity to yield large
+predictivegainsoverwell-speciﬁedparametricmodels.
+TheTweedieregressionmodel,widelyusedinactuarialscience
+due to its capacity to model skewed and heteroscedastic claimdistributions,demonstratedcompetitiveperformanceandremainsa robust and interpretable benchmark for conditional severity
+modeling. This result aligns with broader actuarial evidence that
+ﬂexible parametric models often remain eﬀective when modelassumptionsarenotseverelyviolated.
+Frontiersin BigData 13 frontiersin.org
+--- PAGE 14 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+FIGURE7
+Observed against predicted claim size on log scales.
+Variable importance analysis showed that premium amount
+and insured value were consistently the most inﬂuential
+predictors of claim severity across ensemble models. Additional
+predictors–including vehicle usage, production year, and
+vehicle type–also contributed meaningfully to predictiveperformance. Partial dependence analysis, as formalized
+byFriedman (2001), provided further insight into the
+marginal eﬀects of these predictors while averaging over other
+covariates. The ﬁndings underscore the central role of ﬁnancial
+exposure measures and vehicle characteristics in determining
+claimoutcomes.
+From a methodological perspective, the results complement
+recentactuarialresearchontree-basedmethodsininsurance.Whilestudies such as Janoušek and PeŽta (2025) emphasize predictive
+stabilityandrobustnessinindividual-claimsreserving,and Maciak
+et al. (2022) highlight structured and functional modeling of
+claim development processes, the present study demonstrates that
+similar ensemble techniques can be eﬀectively applied in a cross-
+sectional conditional severity context. However, unlike reserving
+frameworksthatexplicitlymodeltemporalclaimdevelopmentand
+outstanding liabilities, the current analysis does not incorporate
+longitudinal structure. Therefore, insights regarding stability
+and interpretability carry over, whereas structured development
+modelingdoesnotdirectlyapplyinthissetting.
+Despite the reasonable predictive performance achieved, the
+modeling approaches considered here focus on conditional
+mean estimation and do not explicitly address tail risk. Ininsurance portfolios, a small number of extreme claims can
+disproportionately aﬀect aggregate losses. Accurate modeling of
+the upper tail remains essential for capital adequacy and solvencyassessment. Future research s hould therefore explore advanced
+frameworks such as quantile regression for conditional tailmodeling (Koenker and F.Hallock, 2001) and hybrid approachesthat combine machine learning methods with Extreme Value
+Theory. Recent contributions have demonstrated the usefulness
+of integrating generalized random forests with the GeneralizedParetoDistributionfortail-riskmodelingininsuranceandﬁnance(Gnecco et al., 2024; Pasche and Engelke, 2024; Velthoen et al.,
+2023;Youngman,2019; Atheyetal.,2019).
+In conclusion, this study contributes empirical evidence on
+the comparative behavior of statistical and machine learningapproaches for motor insurance claim severity modeling usingdata from an emerging market context. While ensemble methods
+achievedmarginalimprovementsinpredictiveaccuracy,traditional
+parametric models remained competitive and interpretable. Theresults suggest that the choice between statistical and machine
+learning approaches should depend on the balance between
+interpretability, stability, and incremental predictive gain, ratherthan on an assumption of universal superiority of one class of
+methodsoveranother.
+Author’s note
+Apreprintofthisarticlehaspreviouslybeenpublished(Terefe,
+2023).
+Data availability statement
+The datasets presented in this study can be found in
+online repositories. The names of the repository/repositories and
+accession number(s) can be found below: https://data.mendeley.
+com/datasets/34nfrk36dt/1 .
+Author contributions
+ET: Writing – original draft, Software, Investigation,
+Writing – review & editing, Resources, Data curation, Formal
+analysis, Methodology, Project administration, Visualization,
+Conceptualization, Supervision. MA: Writing – review & editing,Writing–originaldraft.
+Frontiersin BigData 14 frontiersin.org
+--- PAGE 15 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+Funding
+The author(s) declared that ﬁnancial support was not received
+forthisworkand/oritspublication.
+Conﬂict of interest
+The author(s) declared that this work was conducted in the
+absence of any commercial or ﬁnancial relationships that could be
+construedasapotentialconﬂictofinterest.
+Generative AI statement
+The author(s) declared that generative AI was not used in the
+creationofthismanuscript.Any alternative text (alt text) provided alongside ﬁgures
+in this article has been generated by Frontiers with thesupport of artiﬁcial intelligence and reasonable eﬀorts havebeen made to ensure accuracy, including review by the
+authors wherever possible. If you identify any issues, please
+contactus.
+Publisher’s note
+All claims expressed in this article are solely those
+of the authors and do not necessarily represent those oftheir aﬃliated organizations, or those of the publisher,
+the editors and the reviewers. Any product that may
+be evaluated in this article, or claim that may be madeby its manufacturer, is not guaranteed or endorsed by
+thepublisher.
+References
+Athey, S., Tibshirani, J., and Wager, S. (2019). Generalized random forests. Ann. Stat .
+47,1148–1178.doi:10.1214/18-AOS1709
+Breiman,L.(1996). Out-of-Bag Estimation .Technicalreport.Berkeley,CA:University
+ofCalifornia.Breiman, L. (2001). Random forests. Mach. Learn . 45, 5–32.
+doi:10.1023/A:1010933404324Breiman, L., and Cutler, A. (2008). Random Forests: Classiﬁcation/Clustering Manual .
+Berkeley,CA:StatisticsDepartment,UniversityofCalifornia.
+Chen, T., and Guestrin, C. (2016). “XGBoost: a scalable tree boosting system,” in
+Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge
+Discovery and Data Mining, KDD ’16 (New York, NY: ACM), 785–794.
+doi:10.1145/2939672.2939785
+Dangeti, P. (2017). Statistics for Machine Learning: Build Supervised, Unsupervised,
+and Reinforcement Learning Models Using Both Python and R . Birmingham: Packt
+PublishingLtd.
+Dunn, P. K., and Smyth, G. K. (2005). Series evaluation of tweedie exponential
+dispersionmodeldensities. Stat. Comput .15,267–280.doi:10.1007/s11222-005-4070-y
+Dunn, P. K., and Smyth, G. K. (2008). Evaluation of tweedie exponentialdispersion model densities by fourier inversion. Stat. Comput . 18, 73–86.
+doi:10.1007/s11222-007-9039-6
+Efron, B., and Tibshirani, R. (1993). An Introduction to the Bootstrap.N e wY o r k ,N Y :
+ChapmanandHall.doi:10.1007/978-1-4899-4541-9Elish, M. O. (2009). Improved estimation of software project eﬀort using
+multiple additive regression trees. Expert Syst. Applic. 36, 10774–10778.
+doi:10.1016/j.eswa.2009.02.013
+Freedman, D., and Diaconis, P. (1981). On the histogram as a density estimator:
+L
+2theory. Zeitschrift Wahrscheinlichkeitstheorie Verwandte Gebiete 57, 453–476.
+doi:10.1007/BF01025868
+Freund, Y. (1995). Boosting a weak learning algorithm by majority. Inform. Comput.
+121,256–285.doi:10.1006/inco.1995.1136Freund, Y., and Schapire, R. E. (1996). “Experiments with a new boosting algorithm,”
+inInternational Conference on Machine Learning . Available online at: https://api.
+semanticscholar.org/CorpusID:1836349
+Friedman, J., Hastie, T., and Tibshirani, R. (2000). Additive statistical regression:
+a statistical view of boosting. Ann. Stat. 28, 337–407. doi: 10.1214/aos/10162
+18223
+Friedman, J. H. (2001). Greedy function approximation: a gradient boosting machine.
+Ann. Stat.29,1189–1232.doi:10.1214/aos/1013203451
+Friedman, J. H. (2002). Stochastic gradient boosting. Comput. Stat. Data Anal. 38,
+367–378.doi:10.1016/S0167-9473(01)00065-2Friedman, J. H., and Meulman, J. J. (2003). Multiple additive regression trees
+with application in epidemiology. Stat. Med . 22, 1365–1381. doi: 10.1002/sim.
+1501Gao, G., Meng, S., and Wuthrich, M. V. (2019). Claims frequencymodeling using telematics car driving data. Scand. Actuar. J. 2019, 143–162.
+doi:10.1080/03461238.2018.1523068
+Gao, G., and Wuthrich, M. V. (2018). Feature extraction from telematics
+car driving heatmaps. Eur. Actuar. J. 8, 383–406. doi: 10.1007/s13385-018-
+0181-7
+Gnecco, N., Terefe, E. M., and Engelke, S. (2024). Extremal random
+forests. J. Am. Stat. Assoc. 119, 3059–3072. doi: 10.1080/01621459.2023.23
+00522
+Guillen, M., Nielsen, J. P., Ayuso, M., and Pérez-Marín, A. M. (2019). The use of
+telematics devices to improve automobile insurance rates. Risk Anal . 39, 72–662.
+doi:10.1111/risa.13172
+Hanafy,M.,and Ming,R.(2021). Machine learning approaches for auto insurance big
+data. J. Risks9:42.doi:10.3390/risks9020042
+Janoušek, J., and Pešta, M. (2025). Bagging and regression trees inindividual claims reserving. Stat. Papers 66, 1–26. doi: 10.1007/s00362-025-
+01715-9
+Jones, Z., and Linder, F. (2016). edarf: exploratory data analysis using random forests.
+J. Open Source Softw.1:92.doi:10.21105/joss.00092
+Jørgensen,B.(1987).Exponentialdispersionmodels. J. R. Stat. Soc.: Ser. B (Methodol.)
+49,127–162.doi:10.1111/j.2517-6161.1987.tb01685.xJørgensen,B.(1997). The Theory of Dispersion Models.London:ChapmanandHall.
+Koenker, R., and Hallock, F. K. (2001). Quantile regression. J. Econ. Perspect . 15,
+143–156.doi:10.1257/jep.15.4.143
+Maciak, M., Mizera, I., and Pešta, M. (2022). Functional proﬁle techniques for claims
+reserving. ASTIN Bull.52,449–482.doi:10.1017/asb.2022.4
+Maindonald, J., and Braun, W. J. (2010). “Data analysis and graphics using R:
+an example-based approach,” in Cambridge Series in Statistical and Probabilistic
+Mathematics (Cambridge).
+Pasche,O.C.,andEngelke,S.(2024).Neuralnetworksforextremequantileregressionwith an application to forecasting of ﬂood risk. J. Ann. Appl. Stat. 18, 2818–2839.
+doi:10.1214/24-AOAS1907
+Polikar, R. (2006). Ensemble based systems in decision making. Circuits Syst. Magaz.
+IEEE6,21–45.doi:10.1109/MCAS.2006.1688199
+Roel, V., Antonio, K., and Claeskens, G. (2017). Unraveling the predictive power
+of telematics data in car insurance pricing. J. R. Stat. Soc. SSRN 28, 72–112.
+doi:10.2139/ssrn.2872112
+Schapire, R. E. (1990). The strength of weak learnability. Mach. Learn . 5, 197–227.
+doi:10.1023/A:1022648800760
+S
+chapire, R. E. (1999). “A brief introduction to boositng,” in Proceedings of the
+Sixteenth International Joint Conference on Artiﬁcial Intelligence (IJCAI-99) (Morgan
+Kaufmann). Available online at: https://www.ijcai.org/Proceedings/99-2/Papers/103.
+pdf
+Frontiersin BigData 15 frontiersin.org
+--- PAGE 16 ---
+Terefe and Aga 10.3389/fdata.2026.1778363
+Silverman, B. W. (1986). Density Estimation for Statistics and Data Analysis .L o n d o n :
+ChapmanandHall/CRC.
+Smyth, G. K., and Jørgensen, B. (2002). Fitting tweedie’s compound poisson
+model to insurance claims data: dispersion modelling. ASTIN Bull. 32, 143–157.
+doi:10.2143/AST.32.1.1020
+Terefe, E. M. (2023). Tree-based machine learning methods for vehicle
+insurance claims size prediction. arXiv [Preprint] arXiv:2302.10612.
+doi:10.48550/arXiv.2302.10612Velthoen, J., Dombry, C., Cai, J.-J., and Engelke, S. (2023). Gradient boosting for
+extremequantileregression. Extremes 26,1–29.doi:10.1007/s10687-023-00473-x
+Youngman, B. D. (2019). Generalized additive models for exceedances of high
+thresholdswithanapplicationtoreturnlevelestimationforuswindgusts. J. Am. Stat.
+Assoc.114,1865–1879.doi:10.1080/01621459.2018.1529596
+Zhang, C., and Ma, Y. (2012). Ensemble Machine Learning: Methods and
+Applications . New York, NY: Springer Science + Business Media, LLC.
+doi:10.1007/978-1-4419-9326-7
+Frontiersin BigData 16 frontiersin.org
