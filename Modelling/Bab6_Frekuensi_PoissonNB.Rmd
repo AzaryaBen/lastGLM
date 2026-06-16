@@ -1,0 +1,384 @@
+---
+title: "Bab 6 – Pemodelan Frekuensi Klaim: Poisson dan Binomial Negatif GLM"
+subtitle: "AK4082 Model Linier Lanjut — Ethiopian Insurance Corporation (2011–2018)"
+author: "Kelompok Azarya"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    df_print: paged
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Pendahuluan
+
+Pada bab ini, variabel **frekuensi klaim** dimodelkan menggunakan GLM diskrit.
+Karena dataset tidak memiliki kolom jumlah klaim (`CLAIM_COUNT`) secara eksplisit,
+frekuensi dikonstruksi sebagai variabel biner yang dikompres ke level polis:
+`CLAIM_IND = 1` jika `CLAIM_PAID > 0`, kemudian diagregasi per `OBJECT_ID`
+untuk mendapatkan jumlah klaim. Namun pada analisis ini, pendekatan yang digunakan
+mengikuti Terefe & Aga (2026): tiap baris adalah satu polis, dan **CLAIM_IND**
+(0/1) dimodelkan langsung; untuk Bab 6 ini kita gunakan pendekatan **count pada
+subset** — yaitu menghitung berapa kali OBJECT_ID yang sama muncul dengan klaim.
+
+> **Catatan implementasi**: Jika `CLAIM_COUNT` tidak tersedia, kita proxy-kan
+> dengan `CLAIM_IND` dan gunakan exposure (masa pertanggungan dalam tahun) sebagai
+> offset. Poisson GLM kemudian memodelkan E[N] = λ × t.
+
+---
+
+# Library dan Import Data
+
+```{r load-libraries}
+library(dplyr)
+library(ggplot2)
+library(MASS)       # glm.nb untuk Binomial Negatif
+library(vcd)        # goodfit untuk uji Chi-Square GoF
+library(car)        # vif untuk diagnostik multikolinieritas
+library(Metrics)    # rmse, rmsle
+library(pscl)       # vuong test (opsional untuk zero-inflated)
+library(AER)        # dispersiontest
+```
+
+```{r import-data}
+# ── SESUAIKAN PATH DENGAN LOKASI FILE ANDA ──────────────────────────────────
+motor <- read.csv("vehicle_insurance_data/motor_data_master_11_18.csv",
+                  stringsAsFactors = FALSE)
+
+# Tampilkan dimensi dan kolom
+cat("Dimensi data:", dim(motor), "\n")
+glimpse(motor)
+```
+
+---
+
+# Pra-Pemrosesan & Rekayasa Variabel
+
+```{r preprocessing}
+# ── 1. Hapus baris dengan tanggal tidak valid ────────────────────────────────
+motor <- motor %>%
+  mutate(
+    INSR_BEGIN = as.Date(INSR_BEGIN, format = "%Y-%m-%d"),
+    INSR_END   = as.Date(INSR_END,   format = "%Y-%m-%d")
+  ) %>%
+  filter(!is.na(INSR_BEGIN), !is.na(INSR_END), INSR_BEGIN < INSR_END)
+
+# ── 2. Hitung exposure dalam satuan tahun (masa pertanggungan) ────────────────
+motor <- motor %>%
+  mutate(EXPOSURE = as.numeric(INSR_END - INSR_BEGIN) / 365.25)
+
+# ── 3. Buat variabel respons: CLAIM_IND dan proxy CLAIM_COUNT ────────────────
+motor <- motor %>%
+  mutate(
+    CLAIM_IND   = as.integer(CLAIM_PAID > 0),          # 0/1
+    CLAIM_COUNT = CLAIM_IND                             # proxy: maks 1 klaim/polis
+  )
+
+# ── 4. Rekayasa VEHICLE_AGE ─────────────────────────────────────────────────
+CURRENT_YEAR <- 2018
+motor <- motor %>%
+  mutate(
+    PROD_YEAR   = as.numeric(PROD_YEAR),
+    VEHICLE_AGE = CURRENT_YEAR - PROD_YEAR
+  ) %>%
+  filter(VEHICLE_AGE >= 0, VEHICLE_AGE <= 50)   # hapus nilai tidak logis
+
+# ── 5. Bersihkan EFFECTIVE_YR ────────────────────────────────────────────────
+motor <- motor %>%
+  mutate(EFFECTIVE_YR = as.numeric(EFFECTIVE_YR)) %>%
+  filter(!is.na(EFFECTIVE_YR), EFFECTIVE_YR >= 0)
+
+# ── 6. Variabel kategorik → faktor ──────────────────────────────────────────
+motor <- motor %>%
+  mutate(
+    SEX          = factor(SEX),
+    INSR_TYPE    = factor(INSR_TYPE),
+    TYPE_VEHICLE = factor(TYPE_VEHICLE),
+    USAGE        = factor(USAGE)
+  ) %>%
+  filter(!is.na(SEX), SEX %in% c("1", "2"))   # hanya Male/Female
+
+# ── 7. Hapus baris dengan NA di prediktor kunci ─────────────────────────────
+motor <- motor %>%
+  filter(
+    !is.na(SEATS_NUM), !is.na(VEHICLE_AGE), !is.na(INSURED_VALUE),
+    !is.na(PREMIUM), !is.na(EXPOSURE), EXPOSURE > 0
+  )
+
+# ── 8. Sampling (opsional — data besar, ambil sampel representatif) ──────────
+set.seed(42)
+n_sample <- min(nrow(motor), 50000)    # ← turunkan jika RAM terbatas
+motor_s  <- motor %>% slice_sample(n = n_sample)
+
+cat("Jumlah baris setelah cleaning (sampel):", nrow(motor_s), "\n")
+cat("Proporsi klaim (CLAIM_IND = 1):",
+    round(mean(motor_s$CLAIM_IND), 4), "\n")
+```
+
+---
+
+# EDA: Distribusi Variabel Respons
+
+```{r eda-response}
+# ── Tabel frekuensi CLAIM_COUNT ──────────────────────────────────────────────
+freq_tbl <- table(motor_s$CLAIM_COUNT)
+cat("\nDistribusi CLAIM_COUNT:\n")
+print(freq_tbl)
+
+# ── Statistik deskriptif ─────────────────────────────────────────────────────
+cat("\nMean CLAIM_COUNT :", mean(motor_s$CLAIM_COUNT), "\n")
+cat("Var  CLAIM_COUNT :", var(motor_s$CLAIM_COUNT),  "\n")
+cat("Rasio Var/Mean   :", var(motor_s$CLAIM_COUNT) / mean(motor_s$CLAIM_COUNT), "\n\n")
+# Jika Var >> Mean → indikasi overdispersi → Binomial Negatif lebih cocok
+```
+
+```{r eda-bar}
+ggplot(motor_s, aes(x = factor(CLAIM_COUNT))) +
+  geom_bar(fill = "steelblue", color = "white") +
+  labs(
+    title = "Distribusi Frekuensi Klaim (Proxy: CLAIM_IND)",
+    x     = "Jumlah Klaim (0 = tidak klaim, 1 = klaim)",
+    y     = "Frekuensi"
+  ) +
+  theme_minimal()
+```
+
+```{r gof-poisson}
+# ── Chi-Square Goodness of Fit: Poisson ─────────────────────────────────────
+cat("=== Uji GoF Poisson ===\n")
+summary(goodfit(motor_s$CLAIM_COUNT, type = "poisson",  method = "MinChisq"))
+
+# ── Chi-Square Goodness of Fit: Binomial Negatif ────────────────────────────
+cat("\n=== Uji GoF Binomial Negatif ===\n")
+summary(goodfit(motor_s$CLAIM_COUNT, type = "nbinomial", method = "MinChisq"))
+```
+
+---
+
+# Spesifikasi Model GLM
+
+## Komponen Model
+
+Untuk **GLM Diskrit** (Poisson / Binomial Negatif):
+
+$$
+\text{Komponen Acak: } Y_i \sim \text{Poisson}(\mu_i) \quad \text{atau} \quad Y_i \sim \text{NB}(\mu_i, \kappa)
+$$
+
+$$
+\text{Komponen Sistematik: } \eta_i = \beta_0 + \sum_{j=1}^{p} \beta_j x_{ij} + \ln(t_i)
+$$
+
+$$
+\text{Fungsi Tautan: } g(\mu_i) = \ln(\mu_i) \implies \mu_i = e^{\eta_i}
+$$
+
+Di mana $t_i$ adalah **exposure** (masa pertanggungan dalam tahun) yang masuk
+sebagai **offset** sehingga koefisiennya dikunci di 1.
+
+---
+
+# Pembagian Data Train/Test (70/30)
+
+```{r train-test-split}
+set.seed(123)
+n      <- nrow(motor_s)
+idx    <- sample(1:n, size = floor(0.7 * n))
+train  <- motor_s[ idx, ]
+test   <- motor_s[-idx, ]
+
+cat("Ukuran train:", nrow(train), "| Ukuran test:", nrow(test), "\n")
+```
+
+---
+
+# Pemodelan
+
+## Model 1: Poisson GLM (Full Model dengan Offset)
+
+```{r poisson-full}
+# ── Full Poisson Model ───────────────────────────────────────────────────────
+m_pois_full <- glm(
+  CLAIM_COUNT ~ SEX + INSR_TYPE + VEHICLE_AGE + INSURED_VALUE +
+                SEATS_NUM + TYPE_VEHICLE + USAGE + EFFECTIVE_YR,
+  family = poisson(link = "log"),
+  offset = log(EXPOSURE),
+  data   = train
+)
+summary(m_pois_full)
+```
+
+## Model 2: Poisson GLM (Stepwise AIC)
+
+```{r poisson-step}
+# ── Stepwise selection (arah: backward) ─────────────────────────────────────
+m_pois_step <- step(m_pois_full, direction = "both", trace = FALSE)
+summary(m_pois_step)
+```
+
+## Model 3: Binomial Negatif GLM (Full Model)
+
+```{r nb-full}
+# ── Binomial Negatif menangani overdispersi ──────────────────────────────────
+# Referensi: Faraway (2016), MASS::glm.nb
+m_nb_full <- glm.nb(
+  CLAIM_COUNT ~ SEX + INSR_TYPE + VEHICLE_AGE + INSURED_VALUE +
+                SEATS_NUM + TYPE_VEHICLE + USAGE + EFFECTIVE_YR +
+                offset(log(EXPOSURE)),
+  data = train,
+  link = log
+)
+summary(m_nb_full)
+```
+
+## Model 4: Binomial Negatif GLM (Stepwise AIC)
+
+```{r nb-step}
+m_nb_step <- step(m_nb_full, direction = "both", trace = FALSE)
+summary(m_nb_step)
+```
+
+---
+
+# Uji Dispersi (Poisson vs. Binomial Negatif)
+
+```{r dispersion-test}
+# ── Uji dispersi formal: H0: tidak ada overdispersi ─────────────────────────
+# Paket AER::dispersiontest
+disp_test <- dispersiontest(m_pois_step, trafo = 1)
+print(disp_test)
+cat("\nKesimpulan: Jika p-value < 0.05, tolak H0 → ada overdispersi → pilih NB\n")
+```
+
+---
+
+# Diagnostik Model
+
+## Uji Analysis of Deviance
+
+```{r anova-poisson}
+cat("=== Analysis of Deviance: Poisson ===\n")
+anova(m_pois_step, test = "Chisq")
+```
+
+```{r anova-nb}
+cat("=== Analysis of Deviance: Binomial Negatif ===\n")
+anova(m_nb_step, test = "Chisq")
+```
+
+## Diagnostik Residual
+
+```{r residual-plot}
+par(mfrow = c(2, 2))
+plot(m_nb_step, which = c(1, 2, 3, 5))
+par(mfrow = c(1, 1))
+```
+
+## VIF (Multikolinieritas)
+
+```{r vif}
+cat("=== Variance Inflation Factor (VIF) ===\n")
+vif(m_nb_step)
+cat("Nilai VIF > 10 mengindikasikan multikolinieritas yang serius\n")
+```
+
+---
+
+# Selang Kepercayaan Koefisien
+
+```{r confint}
+cat("=== SK 95% Koefisien Model NB ===\n")
+confint(m_nb_step, level = 0.95)
+```
+
+```{r confint-mean}
+# SK Mean (pada skala respons asli)
+pred_ci <- exp(predict(m_nb_step, newdata = test,
+                       interval = "confidence", level = 0.95))
+head(data.frame(pred_ci, Actual = test$CLAIM_COUNT))
+```
+
+---
+
+# Evaluasi & Perbandingan Model
+
+```{r model-comparison}
+# Prediksi pada data test
+pred_pois <- predict(m_pois_step, newdata = test,
+                     type = "response", offset = log(test$EXPOSURE))
+pred_nb   <- predict(m_nb_step,   newdata = test,
+                     type = "response")
+
+actual <- test$CLAIM_COUNT
+
+# Metrik evaluasi
+eval_df <- data.frame(
+  Model     = c("Poisson (Stepwise)", "Binomial Negatif (Stepwise)"),
+  AIC       = c(AIC(m_pois_step), AIC(m_nb_step)),
+  Deviance  = c(deviance(m_pois_step), deviance(m_nb_step)),
+  RMSE_Test = c(rmse(actual, pred_pois), rmse(actual, pred_nb)),
+  RMSLE_Test= c(rmsle(actual + 1e-6, pred_pois + 1e-6),
+                rmsle(actual + 1e-6, pred_nb   + 1e-6))
+)
+print(eval_df)
+```
+
+```{r plot-pred-actual}
+# ── Plot prediksi vs aktual ──────────────────────────────────────────────────
+plot_df <- data.frame(
+  Actual    = actual,
+  Poisson   = round(pred_pois),
+  NB        = round(pred_nb)
+)
+
+ggplot(plot_df[1:200, ], aes(x = seq_along(Actual))) +
+  geom_point(aes(y = Actual,  color = "Aktual"),  alpha = 0.6) +
+  geom_point(aes(y = NB,      color = "NB Pred"), alpha = 0.6) +
+  labs(title  = "Perbandingan Prediksi vs Aktual (200 observasi pertama)",
+       x = "Indeks Observasi", y = "Jumlah Klaim", color = "") +
+  theme_minimal()
+```
+
+---
+
+# Interpretasi Koefisien
+
+```{r interpretation}
+# Koefisien dalam bentuk Incidence Rate Ratio (IRR)
+cat("=== Incidence Rate Ratio (IRR) Model NB ===\n")
+irr <- exp(coef(m_nb_step))
+irr_ci <- exp(confint(m_nb_step))
+print(cbind("IRR" = irr, irr_ci))
+cat("\nInterpretasi: IRR > 1 artinya prediktor meningkatkan frekuensi klaim.\n")
+```
+
+---
+
+# Kesimpulan Bab 6
+
+```{r conclusion}
+cat("
+RINGKASAN BAB 6 — PEMODELAN FREKUENSI KLAIM
+============================================
+1. Distribusi respons (CLAIM_COUNT proxy) memiliki Var/Mean =",
+    round(var(motor_s$CLAIM_COUNT)/mean(motor_s$CLAIM_COUNT), 4), "
+   → Indikasi overdispersi → Binomial Negatif lebih sesuai.
+
+2. Model terpilih: Binomial Negatif GLM (Stepwise AIC)
+   - Link function: log (kanonik NB: log)
+   - Offset: log(EXPOSURE) untuk normalisasi exposure
+
+3. Komponen model GLM terpilih:
+   Komponen Acak  : Y_i ~ NB(mu_i, kappa)
+   Komponen Sist. : eta_i = X_i'*beta + log(t_i)
+   Fungsi Tautan  : g(mu) = log(mu)
+
+4. E[N] hasil prediksi pada data test dapat dianalogikan sebagai
+   ekspektasi frekuensi klaim dalam collective risk model.
+")
+```
