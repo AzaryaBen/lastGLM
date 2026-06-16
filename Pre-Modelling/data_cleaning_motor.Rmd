@@ -1,0 +1,366 @@
+---
+title: "Pre-Modelling: Data Cleaning — Motor Insurance Data 2011–2018"
+author: "Azarya Benhanan Isriyanto"
+date: "2026-06-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r import-library}
+library(readr)
+library(dplyr)
+library(skimr)
+library(janitor)
+library(tidyr)
+```
+
+---
+
+## Tahap 1: Import Data Master
+
+```{r import-data}
+motor <- read_csv("vehicle_insurance_data/motor_data_master_11_18.csv")
+
+cat("Dimensi awal dataset:", nrow(motor), "baris x", ncol(motor), "kolom\n")
+glimpse(motor)
+skim(motor)
+```
+
+---
+
+## Tahap 2: Penanganan Duplikasi
+
+Justifikasi: Seluruh 198 baris duplikat memiliki CLAIM_PAID = NA (tidak ada klaim),
+sehingga penghapusan tidak menghilangkan informasi klaim apapun. Duplikasi lengkap
+pada polis tanpa klaim paling mungkin merupakan kesalahan entri data, bukan
+kejadian polis terpisah. Mempertahankannya akan meng-inflate estimasi parameter GLM.
+
+```{r duplikasi}
+n_duplikat <- sum(duplicated(motor))
+cat("Jumlah baris duplikat:", n_duplikat, "\n")
+
+# Verifikasi: semua duplikat memiliki CLAIM_PAID = NA
+duplikat_rows <- motor[duplicated(motor) | duplicated(motor, fromLast = TRUE), ]
+cat("Di antara duplikat, proporsi CLAIM_PAID = NA:",
+    mean(is.na(duplikat_rows$CLAIM_PAID)), "\n")
+
+motor <- motor %>% distinct()
+cat("Baris setelah deduplikasi:", nrow(motor), "\n")
+```
+
+---
+
+## Tahap 3: Penghapusan Kolom Bermasalah
+
+### 3a. CARRYING_CAPACITY dan SEATS_NUM
+
+Justifikasi:
+- CARRYING_CAPACITY: >75% missing — melampaui ambang batas imputasi yang aman
+- SEATS_NUM: 7.46% bernilai 0 (tidak valid secara domain — tidak ada kendaraan
+  berpenumpang 0 kursi), dan dikonfirmasi "not coded correctly" oleh paper rujukan
+- Paper Terefe & Aga (2026) secara eksplisit mendiskualifikasi kedua variabel ini
+
+```{r hapus-kolom-bermasalah}
+# Audit sebelum penghapusan
+cat("CARRYING_CAPACITY — % missing:",
+    round(mean(is.na(motor$CARRYING_CAPACITY)) * 100, 2), "%\n")
+
+n_seats_zero <- sum(motor$SEATS_NUM == 0, na.rm = TRUE)
+pct_seats_zero <- mean(motor$SEATS_NUM == 0, na.rm = TRUE) * 100
+cat("SEATS_NUM bernilai 0:", n_seats_zero,
+    "baris (", round(pct_seats_zero, 2), "%)\n")
+
+motor <- motor %>% select(-CARRYING_CAPACITY, -SEATS_NUM)
+cat("Kolom tersisa setelah penghapusan:", ncol(motor), "\n")
+```
+
+### 3b. EFFECTIVE_YR
+
+Justifikasi:
+- Banyak nilai tidak konsisten dengan periode data 2011–2018 (ada yang negatif,
+  puluhan, dll.) — menunjukkan kesalahan pengkodean yang tidak dapat diperbaiki
+- Informasi tahun efektif sudah terkandung dalam INSR_BEGIN yang lebih reliabel
+- Prinsip parsimoni: variabel redundan yang bermasalah sebaiknya dieliminasi
+
+```{r hapus-effective-yr}
+# Audit nilai tidak wajar
+eff_num <- suppressWarnings(as.numeric(as.character(motor$EFFECTIVE_YR)))
+n_tidak_wajar <- sum(is.na(eff_num) | eff_num < 0 | eff_num > 99, na.rm = TRUE)
+cat("EFFECTIVE_YR dengan nilai tidak wajar:", n_tidak_wajar, "baris\n")
+
+motor <- motor %>% select(-EFFECTIVE_YR)
+```
+
+---
+
+## Tahap 4: Konversi Tipe Data
+
+```{r konversi-tipe}
+motor <- motor %>%
+  mutate(
+    # Variabel kategorikal
+    SEX          = recode_factor(as.factor(SEX),
+                                 `0` = "Legal Entity",
+                                 `1` = "Male",
+                                 `2` = "Female"),
+    INSR_TYPE    = as.factor(INSR_TYPE),
+    TYPE_VEHICLE = as.factor(TYPE_VEHICLE),
+    MAKE         = as.factor(MAKE),
+    USAGE        = as.factor(USAGE),
+
+    # Variabel tanggal
+    INSR_BEGIN   = as.Date(INSR_BEGIN, format = "%d-%b-%y"),
+    INSR_END     = as.Date(INSR_END, format = "%d-%b-%y"),
+
+    # Variabel numerik
+    INSURED_VALUE = as.numeric(INSURED_VALUE),
+    PREMIUM       = as.numeric(PREMIUM),
+    CCM_TON       = as.numeric(CCM_TON),
+    CLAIM_PAID    = as.numeric(CLAIM_PAID)
+  )
+
+glimpse(motor)
+```
+
+---
+
+## Tahap 5: Imputasi Missing Values
+
+Justifikasi (mengikuti Terefe & Aga, 2026): Paper rujukan secara eksplisit menyatakan
+bahwa missing values ditangani dengan metode imputasi yang sesuai. Karena distribusi
+variabel asuransi umumnya right-skewed, digunakan median (bukan mean) untuk variabel
+numerik — median lebih robust terhadap nilai ekstrem. Untuk variabel kategoris,
+digunakan modus (kategori paling sering muncul).
+
+Proporsi missing pada variabel yang diimputasi sangat kecil (<0.03% dari total baris),
+sehingga risiko bias imputasi dapat dianggap trascurable.
+
+PENTING: CLAIM_PAID TIDAK diimputasi. Nilai NA pada CLAIM_PAID merupakan
+"structural zero" — bermakna "tidak ada klaim terjadi", bukan data yang hilang.
+Dalam pemodelan GLM logistik, NA akan dikonversi menjadi CLAIM_IND = 0.
+
+```{r audit-missing-sebelum-imputasi}
+# Audit proporsi missing per kolom sebelum imputasi
+missing_summary <- motor %>%
+  summarise(across(everything(), ~ mean(is.na(.)))) %>%
+  pivot_longer(everything(),
+               names_to  = "kolom",
+               values_to = "pct_missing") %>%
+  filter(pct_missing > 0) %>%
+  arrange(desc(pct_missing))
+
+print(missing_summary)
+```
+
+```{r imputasi}
+# Fungsi imputasi median untuk variabel numerik
+impute_median <- function(x) {
+  med <- median(x, na.rm = TRUE)
+  x[is.na(x)] <- med
+  return(x)
+}
+
+# Fungsi imputasi modus untuk variabel kategoris
+impute_modus <- function(x) {
+  modus <- names(sort(table(x), decreasing = TRUE))[1]
+  x[is.na(x)] <- modus
+  return(x)
+}
+
+motor <- motor %>%
+  mutate(
+    # Imputasi numerik dengan median
+    PREMIUM   = impute_median(PREMIUM),
+    PROD_YEAR = impute_median(as.numeric(PROD_YEAR)),
+    CCM_TON   = impute_median(CCM_TON),
+
+    # Imputasi kategoris dengan modus
+    MAKE      = impute_modus(as.character(MAKE)),
+    MAKE      = as.factor(MAKE)
+  )
+  
+
+# Verifikasi: missing hanya tersisa di CLAIM_PAID (structural zero)
+missing_pasca <- motor %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(),
+               names_to  = "kolom",
+               values_to = "n_missing") %>%
+  filter(n_missing > 0)
+
+print(missing_pasca)
+cat("\nCatatan: Missing pada CLAIM_PAID adalah structural zero (polis tanpa klaim),",
+    "bukan missing value sejati.\n")
+```
+
+---
+
+## Tahap 6: Validasi Business Logic
+
+### 6a. Durasi Polis (INSR_BEGIN dan INSR_END)
+
+Justifikasi: Dari 190 baris dengan INSR_END <= INSR_BEGIN:
+- 187 baris tidak memiliki klaim → dihapus (durasi nol tanpa klaim = tidak informatif;
+  log(0) tidak terdefinisi sebagai offset exposure dalam GLM)
+- 3 baris memiliki klaim aktif → dihapus karena dalam pemodelan tarif GLM standar,
+  exposure (durasi) tidak boleh bernilai 0 karena log(0) = -Inf menghasilkan
+  linear predictor yang tidak valid
+
+```{r validasi-tanggal}
+motor <- motor %>%
+  mutate(DURATION_DAYS = as.numeric(difftime(INSR_END, INSR_BEGIN, units = "days")))
+
+# Audit sebelum filter
+cat("Baris dengan durasi <= 0 hari (INSR_END <= INSR_BEGIN):\n")
+motor %>%
+  filter(DURATION_DAYS <= 0) %>%
+  summarise(
+    total_baris = n(),
+    ada_klaim   = sum(!is.na(CLAIM_PAID)),
+    tanpa_klaim = sum(is.na(CLAIM_PAID))
+  ) %>%
+  print()
+
+motor <- motor %>% filter(DURATION_DAYS > 0)
+cat("Baris setelah filter durasi:", nrow(motor), "\n")
+```
+
+### 6b. Nilai Tidak Mungkin Negatif
+
+```{r validasi-negatif}
+motor %>%
+  filter(INSURED_VALUE < 0 | PREMIUM < 0 | (!is.na(CLAIM_PAID) & CLAIM_PAID < 0)) %>%
+  nrow() %>%
+  cat("Baris dengan nilai negatif tidak wajar:", ., "\n")
+```
+
+### 6c. Tahun Produksi Kendaraan
+
+```{r validasi-prod-year}
+motor %>%
+  filter(PROD_YEAR < 1900 | PROD_YEAR > 2019) %>%
+  nrow() %>%
+  cat("Baris dengan PROD_YEAR tidak wajar (<1900 atau >2019):", ., "\n")
+```
+
+### 6d. Validasi CLAIM_PAID terhadap INSURED_VALUE
+
+Justifikasi TIDAK difilter: Berdasarkan paper Terefe & Aga (2026), kontrak asuransi
+dalam dataset ini bersifat bundled. INSURED_VALUE hanya mencerminkan komponen
+comprehensive coverage, sementara kontrak juga mencakup liability, BSG, dan PLL
+yang nilainya tidak terkandung di kolom INSURED_VALUE. Oleh karena itu:
+
+    CLAIM_PAID = comprehensive loss + liability + PLL
+
+sehingga CLAIM_PAID > INSURED_VALUE adalah valid secara kontraktual.
+Kasus CLAIM_PAID = INSURED_VALUE (4 polis) juga valid — ini adalah total loss.
+Polis dengan INSURED_VALUE = 0 adalah polis TPL-only (tanpa komponen comprehensive).
+
+```{r validasi-klaim}
+# Informatif saja, tidak dihapus
+motor %>%
+  filter(!is.na(CLAIM_PAID) & INSURED_VALUE == 0) %>%
+  nrow() %>%
+  cat("Polis TPL-only (INSURED_VALUE = 0) dengan klaim:", ., "\n")
+
+motor %>%
+  filter(!is.na(CLAIM_PAID) & INSURED_VALUE > 0 & CLAIM_PAID > INSURED_VALUE) %>%
+  nrow() %>%
+  cat("Polis komprehensif dengan CLAIM_PAID > INSURED_VALUE (valid karena bundled):", ., "\n")
+
+# Flag jenis coverage
+motor <- motor %>%
+  mutate(COVERAGE_TYPE = ifelse(INSURED_VALUE == 0, "TPL_only", "Comprehensive_bundled"))
+```
+
+### 6e. Distribusi Variabel SEX
+
+```{r validasi-sex}
+cat("Distribusi SEX:\n")
+table(motor$SEX, useNA = "always")
+```
+
+---
+
+## Tahap 7: Rekayasa Fitur untuk Pemodelan
+
+```{r feature-engineering}
+motor <- motor %>%
+  mutate(
+    # Indikator klaim biner — variabel respons untuk GLM Logistik (Bab 7)
+    CLAIM_IND = as.factor(ifelse(!is.na(CLAIM_PAID) & CLAIM_PAID > 0, 1, 0)),
+
+    # Exposure dalam satuan tahun — offset untuk model Poisson/Gamma (Bab 6 & 8)
+    EXPOSURE_YR = DURATION_DAYS / 365.25,
+
+    # Log-exposure untuk digunakan sebagai offset dalam GLM
+    LOG_EXPOSURE = log(EXPOSURE_YR)
+  )
+
+cat("Distribusi CLAIM_IND (0 = tidak klaim, 1 = klaim):\n")
+table(motor$CLAIM_IND)
+cat("Proporsi polis dengan klaim:", round(mean(motor$CLAIM_IND == 1) * 100, 2), "%\n")
+```
+
+---
+
+## Tahap 8: Deteksi Outlier (Informatif, Tidak Menghapus)
+
+Justifikasi: Deteksi outlier pada tahap ini bersifat deskriptif dan informatif,
+BUKAN basis penghapusan data. Alasannya:
+1. Distribusi variabel asuransi (premi, klaim) secara inheren right-skewed dan
+   heavy-tailed — klaim besar justru paling penting untuk dimodelkan.
+2. GLM Gamma/Tweedie mengakomodasi variabilitas tinggi secara implisit melalui
+   fungsi variansi V(mu) = mu^2 (Gamma).
+3. Metode IQR dirancang untuk distribusi normal dan tidak reliable untuk
+   distribusi asuransi.
+
+```{r outlier-detection}
+deteksi_outlier <- function(x, nama_kolom) {
+  Q1  <- quantile(x, 0.25, na.rm = TRUE)
+  Q3  <- quantile(x, 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  batas_bawah <- Q1 - 3 * IQR_val
+  batas_atas  <- Q3 + 3 * IQR_val
+  n_outlier   <- sum(x < batas_bawah | x > batas_atas, na.rm = TRUE)
+  cat(sprintf("%-20s | Q1=%.1f | Q3=%.1f | Batas: [%.1f, %.1f] | Outlier: %d\n",
+              nama_kolom, Q1, Q3, batas_bawah, batas_atas, n_outlier))
+}
+
+deteksi_outlier(motor$INSURED_VALUE,                        "INSURED_VALUE")
+deteksi_outlier(motor$PREMIUM,                              "PREMIUM")
+deteksi_outlier(motor$CLAIM_PAID[motor$CLAIM_PAID > 0],    "CLAIM_PAID (>0)")
+deteksi_outlier(motor$CCM_TON,                              "CCM_TON")
+
+cat("\nCatatan: Outlier di atas TIDAK dihapus.",
+    "Ini adalah karakteristik distribusi asuransi yang right-skewed.\n")
+```
+
+---
+
+## Ringkasan Akhir Dataset
+
+```{r ringkasan-akhir}
+cat("=== RINGKASAN DATASET SETELAH CLEANING ===\n")
+cat("Total observasi:", nrow(motor), "\n")
+cat("Total variabel :", ncol(motor), "\n\n")
+
+cat("Komposisi variabel:\n")
+cat("  - Variabel kategoris   :", sum(sapply(motor, is.factor)), "\n")
+cat("  - Variabel numerik     :", sum(sapply(motor, is.numeric)), "\n")
+cat("  - Variabel tanggal     :", sum(sapply(motor, inherits, "Date")), "\n\n")
+
+cat("Proporsi polis klaim    :", round(mean(motor$CLAIM_IND == 1) * 100, 2), "%\n")
+cat("Proporsi polis TPL-only :", round(mean(motor$COVERAGE_TYPE == "TPL_only") * 100, 2), "%\n")
+
+skim(motor)
+```
+
+```{r export-clean-data}
+# Export dataset bersih untuk digunakan di pemodelan Bab 6, 7, dan 8
+write_csv(motor, "vehicle_insurance_data/motor_data_clean.csv")
+cat("Dataset bersih berhasil diekspor ke: motor_data_clean.csv\n")
+```
