@@ -1,0 +1,633 @@
+---
+title: "EDA — Motor Insurance Data 2011–2018"
+author: "Azarya Benhanan Isriyanto"
+date: "2026-06-09"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 9, fig.height = 5)
+```
+
+```{r library}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(forcats)      # fct_lump, fct_reorder
+library(lubridate)    # year(), month()
+library(patchwork)    # menyusun beberapa plot menjadi satu panel
+library(GGally)       # ggpairs untuk scatter matrix
+library(corrplot)     # correlation heatmap
+
+theme_set(theme_minimal(base_size = 12) +
+            theme(plot.title    = element_text(face = "bold", size = 13),
+                  plot.subtitle = element_text(colour = "grey40"),
+                  axis.title    = element_text(size = 11)))
+```
+
+```{r import-data}
+motor <- read_csv("vehicle_insurance_data/motor_data_clean.csv") %>%
+  mutate(
+    SEX          = as.factor(SEX),
+    INSR_TYPE    = as.factor(INSR_TYPE),
+    TYPE_VEHICLE = as.factor(TYPE_VEHICLE),
+    MAKE         = as.factor(MAKE),
+    USAGE        = as.factor(USAGE),
+    CLAIM_IND    = as.factor(CLAIM_IND),
+    COVERAGE_TYPE = as.factor(COVERAGE_TYPE),
+    INSR_BEGIN   = as.Date(INSR_BEGIN),
+    INSR_END     = as.Date(INSR_END)
+  )
+
+cat("Dimensi dataset bersih:", nrow(motor), "baris x", ncol(motor), "kolom\n")
+```
+
+# ============================================================
+# BAGIAN 1 — VARIABEL RESPONS
+# ============================================================
+
+## 1.1 Distribusi CLAIM_IND (Indikator Klaim Biner)
+
+```{r resp-claim-ind}
+# Ringkasan frekuensi
+tbl_claim <- motor %>%
+  count(CLAIM_IND) %>%
+  mutate(
+    label   = ifelse(CLAIM_IND == 1, "Klaim (1)", "Tidak Klaim (0)"),
+    pct     = n / sum(n),
+    pct_txt = percent(pct, accuracy = 0.01)
+  )
+
+print(tbl_claim)
+
+# Bar chart dengan proporsi
+p_claim_bar <- ggplot(tbl_claim, aes(x = label, y = pct, fill = CLAIM_IND)) +
+  geom_col(width = 0.5, show.legend = FALSE) +
+  geom_text(aes(label = paste0(pct_txt, "\n(n=", comma(n), ")")),
+            vjust = -0.4, size = 3.8) +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1.05)) +
+  scale_fill_manual(values = c("0" = "#90CAF9", "1" = "#EF5350")) +
+  labs(title    = "Gambar 1. Distribusi CLAIM_IND",
+       subtitle = "Dataset bersifat strongly zero-inflated (~7,5% klaim)",
+       x = NULL, y = "Proporsi")
+
+p_claim_bar
+```
+
+## 1.2 Distribusi CLAIM_PAID (hanya polis berklaim)
+
+```{r resp-claim-paid}
+klaim_df <- motor %>% filter(!is.na(CLAIM_PAID) & CLAIM_PAID > 0)
+
+cat("Statistik deskriptif CLAIM_PAID (polis berklaim):\n")
+summary(klaim_df$CLAIM_PAID)
+
+# Histogram skala asli
+p_cp_hist <- ggplot(klaim_df, aes(x = CLAIM_PAID)) +
+  geom_histogram(bins = 60, fill = "#EF5350", colour = "white", alpha = 0.85) +
+  scale_x_continuous(labels = comma) +
+  labs(title    = "Gambar 2a. Distribusi CLAIM_PAID (skala asli)",
+       subtitle = "Sangat right-skewed — mendukung distribusi Gamma/Tweedie",
+       x = "CLAIM_PAID (ETB)", y = "Frekuensi")
+
+# Histogram log-skala
+p_cp_log <- ggplot(klaim_df, aes(x = log(CLAIM_PAID))) +
+  geom_histogram(bins = 60, fill = "#EF5350", colour = "white", alpha = 0.85) +
+  labs(title    = "Gambar 2b. Distribusi log(CLAIM_PAID)",
+       subtitle = "Lebih mendekati simetris — justifikasi log-link GLM",
+       x = "log(CLAIM_PAID)", y = "Frekuensi")
+
+p_cp_hist / p_cp_log   # patchwork: susun vertikal
+```
+
+# ============================================================
+# BAGIAN 2 — VARIABEL KATEGORIS
+# ============================================================
+
+## 2.1 SEX
+
+```{r kat-sex}
+p_sex_bar <- motor %>%
+  count(SEX, CLAIM_IND) %>%
+  group_by(SEX) %>%
+  mutate(pct = n / sum(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x = SEX, y = pct, fill = CLAIM_IND)) +
+  geom_col(position = "fill", width = 0.5) +
+  geom_text(aes(label = ifelse(CLAIM_IND == 1, percent(pct, accuracy = 0.1), "")),
+            position = position_fill(vjust = 0.5), size = 3.5, colour = "white") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = c("0" = "#90CAF9", "1" = "#EF5350"),
+                    labels  = c("Tidak Klaim", "Klaim")) +
+  labs(title = "Gambar 3. Proporsi Klaim per Jenis Kelamin / Entitas",
+       x = "SEX", y = "Proporsi", fill = "CLAIM_IND")
+
+p_sex_bar
+```
+
+## 2.2 INSR_TYPE
+
+```{r kat-insr-type}
+p_insr_bar <- motor %>%
+  count(INSR_TYPE, CLAIM_IND) %>%
+  group_by(INSR_TYPE) %>%
+  mutate(pct = n / sum(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x = INSR_TYPE, y = pct, fill = CLAIM_IND)) +
+  geom_col(position = "fill", width = 0.5) +
+  geom_text(aes(label = ifelse(CLAIM_IND == 1, percent(pct, accuracy = 0.1), "")),
+            position = position_fill(vjust = 0.5), size = 3.5, colour = "white") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = c("0" = "#90CAF9", "1" = "#EF5350"),
+                    labels  = c("Tidak Klaim", "Klaim")) +
+  labs(title = "Gambar 4. Proporsi Klaim per Tipe Asuransi",
+       x = "INSR_TYPE", y = "Proporsi", fill = "CLAIM_IND")
+
+p_insr_bar
+```
+
+## 2.3 TYPE_VEHICLE
+
+```{r kat-type-vehicle}
+# Hitung claim rate per tipe kendaraan
+claim_rate_vehicle <- motor %>%
+  group_by(TYPE_VEHICLE) %>%
+  summarise(
+    n_polis     = n(),
+    n_klaim     = sum(CLAIM_IND == 1),
+    claim_rate  = n_klaim / n_polis
+  ) %>%
+  arrange(desc(claim_rate))
+
+# Lollipop chart claim rate
+p_vehicle_lollipop <- ggplot(claim_rate_vehicle,
+       aes(x = claim_rate,
+           y = fct_reorder(TYPE_VEHICLE, claim_rate))) +
+  geom_segment(aes(x = 0, xend = claim_rate,
+                   y = fct_reorder(TYPE_VEHICLE, claim_rate),
+                   yend = fct_reorder(TYPE_VEHICLE, claim_rate)),
+               colour = "grey70") +
+  geom_point(colour = "#EF5350", size = 3.5) +
+  geom_text(aes(label = percent(claim_rate, accuracy = 0.1)),
+            hjust = -0.3, size = 3.2) +
+  scale_x_continuous(labels = percent_format(), limits = c(0, max(claim_rate_vehicle$claim_rate) * 1.25)) +
+  labs(title    = "Gambar 5. Claim Rate per Tipe Kendaraan",
+       subtitle = "Klaim rate = proporsi polis yang mengajukan klaim",
+       x = "Claim Rate", y = "Tipe Kendaraan")
+
+p_vehicle_lollipop
+```
+
+## 2.4 USAGE
+
+```{r kat-usage}
+claim_rate_usage <- motor %>%
+  group_by(USAGE) %>%
+  summarise(
+    n_polis    = n(),
+    n_klaim    = sum(CLAIM_IND == 1),
+    claim_rate = n_klaim / n_polis
+  ) %>%
+  arrange(desc(claim_rate))
+
+p_usage_lollipop <- ggplot(claim_rate_usage,
+       aes(x = claim_rate,
+           y = fct_reorder(USAGE, claim_rate))) +
+  geom_segment(aes(x = 0, xend = claim_rate,
+                   y = fct_reorder(USAGE, claim_rate),
+                   yend = fct_reorder(USAGE, claim_rate)),
+               colour = "grey70") +
+  geom_point(colour = "#2196F3", size = 3.5) +
+  geom_text(aes(label = percent(claim_rate, accuracy = 0.1)),
+            hjust = -0.3, size = 3.2) +
+  scale_x_continuous(labels = percent_format(),
+                     limits = c(0, max(claim_rate_usage$claim_rate) * 1.25)) +
+  labs(title    = "Gambar 6. Claim Rate per Penggunaan Kendaraan",
+       subtitle = "Kategori USAGE dengan klaim rate tertinggi menjadi kandidat prediktor kuat",
+       x = "Claim Rate", y = "USAGE")
+
+p_usage_lollipop
+```
+
+## 2.5 MAKE (Top 20 Merek)
+
+```{r kat-make}
+# MAKE memiliki 792 level — hanya tampilkan top 20 berdasarkan volume
+top20_make <- motor %>%
+  group_by(MAKE) %>%
+  summarise(
+    n_polis    = n(),
+    n_klaim    = sum(CLAIM_IND == 1),
+    claim_rate = n_klaim / n_polis
+  ) %>%
+  arrange(desc(n_polis)) %>%
+  slice_head(n = 20)
+
+p_make <- ggplot(top20_make,
+       aes(x = n_polis,
+           y = fct_reorder(MAKE, n_polis),
+           fill = claim_rate)) +
+  geom_col() +
+  geom_text(aes(label = percent(claim_rate, accuracy = 0.1)),
+            hjust = -0.2, size = 3) +
+  scale_x_continuous(labels = comma,
+                     limits = c(0, max(top20_make$n_polis) * 1.15)) +
+  scale_fill_gradient(low = "#BBDEFB", high = "#B71C1C",
+                      labels = percent_format(),
+                      name   = "Claim Rate") +
+  labs(title    = "Gambar 7. Top 20 Merek Kendaraan (Volume Polis)",
+       subtitle = "Warna menunjukkan claim rate; teks menunjukkan nilai claim rate",
+       x = "Jumlah Polis", y = "Merek Kendaraan")
+
+p_make
+```
+
+## 2.6 COVERAGE_TYPE
+
+```{r kat-coverage}
+p_coverage <- motor %>%
+  count(COVERAGE_TYPE, CLAIM_IND) %>%
+  group_by(COVERAGE_TYPE) %>%
+  mutate(pct = n / sum(n)) %>%
+  ungroup() %>%
+  ggplot(aes(x = COVERAGE_TYPE, y = pct, fill = CLAIM_IND)) +
+  geom_col(position = "fill", width = 0.4) +
+  geom_text(aes(label = ifelse(CLAIM_IND == 1, percent(pct, accuracy = 0.1), "")),
+            position = position_fill(vjust = 0.5), size = 3.8, colour = "white") +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = c("0" = "#90CAF9", "1" = "#EF5350"),
+                    labels  = c("Tidak Klaim", "Klaim")) +
+  labs(title = "Gambar 8. Proporsi Klaim per Tipe Coverage",
+       x = "Coverage Type", y = "Proporsi", fill = "CLAIM_IND")
+
+p_coverage
+```
+
+# ============================================================
+# BAGIAN 3 — VARIABEL NUMERIK KONTINU
+# ============================================================
+
+## 3.1 Ringkasan Statistik Variabel Numerik
+
+```{r num-summary}
+num_vars <- motor %>%
+  select(INSURED_VALUE, PREMIUM, PROD_YEAR, CCM_TON,
+         CLAIM_PAID, DURATION_DAYS, EXPOSURE_YR)
+
+cat("Statistik deskriptif variabel numerik:\n")
+summary(num_vars)
+```
+
+## 3.2 Distribusi INSURED_VALUE dan PREMIUM
+
+```{r num-insured-premium}
+# Histogram INSURED_VALUE — termasuk polis TPL (INSURED_VALUE = 0)
+p_iv <- ggplot(motor %>% filter(INSURED_VALUE > 0),
+               aes(x = log(INSURED_VALUE))) +
+  geom_histogram(bins = 60, fill = "#7E57C2", colour = "white", alpha = 0.85) +
+  labs(title = "Gambar 9a. Distribusi log(INSURED_VALUE)",
+       subtitle = "Polis TPL-only (INSURED_VALUE = 0) dikecualikan",
+       x = "log(INSURED_VALUE)", y = "Frekuensi")
+
+# Histogram PREMIUM
+p_prem <- ggplot(motor %>% filter(PREMIUM > 0),
+                 aes(x = log(PREMIUM))) +
+  geom_histogram(bins = 60, fill = "#26A69A", colour = "white", alpha = 0.85) +
+  labs(title = "Gambar 9b. Distribusi log(PREMIUM)",
+       x = "log(PREMIUM)", y = "Frekuensi")
+
+p_iv | p_prem   # patchwork: susun horizontal
+```
+
+## 3.3 Distribusi PROD_YEAR (Tahun Produksi Kendaraan)
+
+```{r num-prod-year}
+p_prod <- ggplot(motor, aes(x = PROD_YEAR)) +
+  geom_histogram(binwidth = 1, fill = "#FF8F00", colour = "white", alpha = 0.85) +
+  scale_x_continuous(breaks = seq(1950, 2020, by = 10)) +
+  labs(title    = "Gambar 10. Distribusi Tahun Produksi Kendaraan",
+       subtitle = "Mayoritas kendaraan diproduksi setelah tahun 1995",
+       x = "Tahun Produksi", y = "Frekuensi")
+
+p_prod
+```
+
+## 3.4 VEHICLE_AGE (Usia Kendaraan) — Derived Variable
+
+```{r num-vehicle-age}
+# Membuat variabel usia kendaraan dari INSR_BEGIN dan PROD_YEAR
+motor <- motor %>%
+  mutate(VEHICLE_AGE = year(INSR_BEGIN) - PROD_YEAR)
+
+# Distribusi usia kendaraan
+p_vage_hist <- ggplot(motor %>% filter(VEHICLE_AGE >= 0 & VEHICLE_AGE <= 50),
+                      aes(x = VEHICLE_AGE)) +
+  geom_histogram(binwidth = 1, fill = "#FF8F00", colour = "white", alpha = 0.85) +
+  labs(title = "Gambar 11a. Distribusi Usia Kendaraan (Tahun)",
+       x = "Usia Kendaraan (tahun)", y = "Frekuensi")
+
+# Claim rate per usia kendaraan (kelompok 5 tahun)
+p_vage_rate <- motor %>%
+  filter(VEHICLE_AGE >= 0 & VEHICLE_AGE <= 40) %>%
+  mutate(AGE_GROUP = cut(VEHICLE_AGE, breaks = seq(0, 40, by = 5),
+                         include.lowest = TRUE, right = FALSE)) %>%
+  group_by(AGE_GROUP) %>%
+  summarise(
+    n_polis    = n(),
+    claim_rate = mean(CLAIM_IND == 1)
+  ) %>%
+  ggplot(aes(x = AGE_GROUP, y = claim_rate)) +
+  geom_col(fill = "#FF8F00", alpha = 0.85) +
+  geom_text(aes(label = percent(claim_rate, accuracy = 0.1)),
+            vjust = -0.4, size = 3.2) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.15))) +
+  labs(title    = "Gambar 11b. Claim Rate per Kelompok Usia Kendaraan",
+       subtitle = "Apakah kendaraan lebih tua cenderung lebih banyak klaim?",
+       x = "Kelompok Usia Kendaraan", y = "Claim Rate")
+
+p_vage_hist / p_vage_rate
+```
+
+## 3.5 Distribusi DURATION_DAYS dan EXPOSURE_YR
+
+```{r num-duration}
+p_dur <- ggplot(motor, aes(x = DURATION_DAYS)) +
+  geom_histogram(bins = 60, fill = "#42A5F5", colour = "white", alpha = 0.85) +
+  labs(title    = "Gambar 12a. Distribusi Durasi Polis (hari)",
+       subtitle = "Mayoritas polis berdurasi sekitar 1 tahun (365 hari)",
+       x = "Durasi (hari)", y = "Frekuensi")
+
+p_exp <- ggplot(motor, aes(x = EXPOSURE_YR)) +
+  geom_histogram(bins = 60, fill = "#42A5F5", colour = "white", alpha = 0.85) +
+  labs(title = "Gambar 12b. Distribusi Exposure (tahun)",
+       x = "Exposure (tahun)", y = "Frekuensi")
+
+p_dur | p_exp
+```
+
+## 3.6 CCM_TON (Kapasitas Mesin / Tonase)
+
+```{r num-ccmton}
+p_ccm <- ggplot(motor %>% filter(CCM_TON > 0),
+                aes(x = CCM_TON)) +
+  geom_histogram(bins = 60, fill = "#78909C", colour = "white", alpha = 0.85) +
+  scale_x_continuous(labels = comma) +
+  labs(title    = "Gambar 13a. Distribusi CCM_TON (skala asli)",
+       subtitle = "Bimodal — mungkin mencerminkan campuran sepeda motor dan kendaraan besar",
+       x = "CCM / Tonase", y = "Frekuensi")
+
+p_ccm_log <- ggplot(motor %>% filter(CCM_TON > 0),
+                    aes(x = log(CCM_TON))) +
+  geom_histogram(bins = 60, fill = "#78909C", colour = "white", alpha = 0.85) +
+  labs(title = "Gambar 13b. Distribusi log(CCM_TON)",
+       x = "log(CCM_TON)", y = "Frekuensi")
+
+p_ccm | p_ccm_log
+```
+
+# ============================================================
+# BAGIAN 4 — VARIABEL TANGGAL (TREN TEMPORAL)
+# ============================================================
+
+## 4.1 Tren Jumlah Polis per Tahun
+
+```{r temporal-polis}
+motor <- motor %>%
+  mutate(
+    TAHUN  = year(INSR_BEGIN),
+    BULAN  = month(INSR_BEGIN, label = TRUE, abbr = TRUE)
+  )
+
+p_trend_polis <- motor %>%
+  count(TAHUN) %>%
+  ggplot(aes(x = TAHUN, y = n)) +
+  geom_line(colour = "#1565C0", linewidth = 1) +
+  geom_point(colour = "#1565C0", size = 3) +
+  geom_text(aes(label = comma(n)), vjust = -0.7, size = 3.2) +
+  scale_x_continuous(breaks = 2011:2018) +
+  scale_y_continuous(labels = comma) +
+  labs(title    = "Gambar 14. Tren Jumlah Polis per Tahun (2011–2018)",
+       subtitle = "Memvisualisasikan pertumbuhan portofolio asuransi",
+       x = "Tahun", y = "Jumlah Polis")
+
+p_trend_polis
+```
+
+## 4.2 Tren Claim Rate per Tahun
+
+```{r temporal-claimrate}
+p_trend_rate <- motor %>%
+  group_by(TAHUN) %>%
+  summarise(
+    n_polis    = n(),
+    n_klaim    = sum(CLAIM_IND == 1),
+    claim_rate = n_klaim / n_polis
+  ) %>%
+  ggplot(aes(x = TAHUN, y = claim_rate)) +
+  geom_line(colour = "#C62828", linewidth = 1) +
+  geom_point(colour = "#C62828", size = 3) +
+  geom_text(aes(label = percent(claim_rate, accuracy = 0.1)),
+            vjust = -0.7, size = 3.2) +
+  scale_x_continuous(breaks = 2011:2018) +
+  scale_y_continuous(labels = percent_format(), limits = c(0, NA)) +
+  labs(title    = "Gambar 15. Tren Claim Rate Tahunan (2011–2018)",
+       subtitle = "Apakah claim rate berubah signifikan antar tahun?",
+       x = "Tahun", y = "Claim Rate")
+
+p_trend_rate
+```
+
+## 4.3 Pola Musiman — Jumlah Klaim per Bulan
+
+```{r temporal-bulanan}
+p_bulanan <- motor %>%
+  filter(CLAIM_IND == 1) %>%
+  count(BULAN) %>%
+  ggplot(aes(x = BULAN, y = n)) +
+  geom_col(fill = "#EF5350", alpha = 0.85) +
+  geom_text(aes(label = comma(n)), vjust = -0.4, size = 3.2) +
+  scale_y_continuous(labels = comma) +
+  labs(title    = "Gambar 16. Distribusi Klaim per Bulan (Agregat 2011–2018)",
+       subtitle = "Apakah ada pola musiman dalam frekuensi klaim?",
+       x = "Bulan", y = "Jumlah Klaim")
+
+p_bulanan
+```
+
+# ============================================================
+# BAGIAN 5 — HUBUNGAN PREDIKTOR DENGAN RESPONS
+# ============================================================
+
+## 5.1 Boxplot INSURED_VALUE vs CLAIM_IND
+
+```{r hub-iv-claim}
+p_iv_box <- ggplot(motor %>% filter(INSURED_VALUE > 0),
+                   aes(x = CLAIM_IND, y = log(INSURED_VALUE), fill = CLAIM_IND)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.5, outlier.alpha = 0.3) +
+  scale_fill_manual(values = c("0" = "#90CAF9", "1" = "#EF5350")) +
+  labs(title    = "Gambar 17. log(INSURED_VALUE) vs CLAIM_IND",
+       subtitle = "Apakah nilai pertanggungan berbeda antara polis klaim dan tidak?",
+       x = "CLAIM_IND (0 = Tidak Klaim, 1 = Klaim)",
+       y = "log(INSURED_VALUE)") +
+  theme(legend.position = "none")
+
+p_iv_box
+```
+
+## 5.2 Boxplot PREMIUM vs CLAIM_IND
+
+```{r hub-premium-claim}
+p_prem_box <- ggplot(motor %>% filter(PREMIUM > 0),
+                     aes(x = CLAIM_IND, y = log(PREMIUM), fill = CLAIM_IND)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.5, outlier.alpha = 0.3) +
+  scale_fill_manual(values = c("0" = "#90CAF9", "1" = "#EF5350")) +
+  labs(title    = "Gambar 18. log(PREMIUM) vs CLAIM_IND",
+       subtitle = "Polis dengan premi lebih tinggi cenderung lebih banyak klaim?",
+       x = "CLAIM_IND", y = "log(PREMIUM)") +
+  theme(legend.position = "none")
+
+p_prem_box
+```
+
+## 5.3 Boxplot VEHICLE_AGE vs CLAIM_IND
+
+```{r hub-vage-claim}
+p_vage_box <- ggplot(motor %>% filter(VEHICLE_AGE >= 0 & VEHICLE_AGE <= 40),
+                     aes(x = CLAIM_IND, y = VEHICLE_AGE, fill = CLAIM_IND)) +
+  geom_boxplot(alpha = 0.7, outlier.size = 0.5, outlier.alpha = 0.3) +
+  scale_fill_manual(values = c("0" = "#90CAF9", "1" = "#EF5350")) +
+  labs(title    = "Gambar 19. Usia Kendaraan vs CLAIM_IND",
+       x = "CLAIM_IND", y = "Usia Kendaraan (tahun)") +
+  theme(legend.position = "none")
+
+p_vage_box
+```
+
+## 5.4 Scatter Plot log(CLAIM_PAID) vs log(INSURED_VALUE) — Subset Klaim
+
+```{r hub-scatter-severity}
+p_scatter <- ggplot(klaim_df %>% filter(INSURED_VALUE > 0),
+                    aes(x = log(INSURED_VALUE), y = log(CLAIM_PAID))) +
+  geom_point(alpha = 0.15, size = 0.8, colour = "#EF5350") +
+  geom_smooth(method = "lm", colour = "black", linewidth = 0.8, se = TRUE) +
+  labs(title    = "Gambar 20. log(CLAIM_PAID) vs log(INSURED_VALUE) — Polis Berklaim",
+       subtitle = "Garis biru = regresi linier sederhana; shade = CI 95%",
+       x = "log(INSURED_VALUE)", y = "log(CLAIM_PAID)")
+
+p_scatter
+```
+
+## 5.5 Violin Plot log(CLAIM_PAID) per TYPE_VEHICLE — Subset Klaim
+
+```{r hub-violin-vehicle}
+# Hanya tampilkan tipe kendaraan dengan lebih dari sama dengan 100 klaim
+valid_types <- klaim_df %>%
+  count(TYPE_VEHICLE) %>%
+  filter(n >= 100) %>%
+  pull(TYPE_VEHICLE)
+
+p_violin <- ggplot(klaim_df %>% filter(TYPE_VEHICLE %in% valid_types),
+                   aes(x = fct_reorder(TYPE_VEHICLE, CLAIM_PAID, median),
+                       y = log(CLAIM_PAID),
+                       fill = TYPE_VEHICLE)) +
+  geom_violin(alpha = 0.6, show.legend = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.size = 0.5, show.legend = FALSE) +
+  coord_flip() +
+  labs(title    = "Gambar 21. Distribusi log(CLAIM_PAID) per Tipe Kendaraan",
+       subtitle = "Violin + boxplot — hanya tipe kendaraan dengan lebih dari sama dengan 100 klaim",
+       x = "Tipe Kendaraan", y = "log(CLAIM_PAID)")
+
+p_violin
+```
+
+# ============================================================
+# BAGIAN 6 — MATRIKS KORELASI (VARIABEL NUMERIK)
+# ============================================================
+
+```{r korelasi}
+num_for_corr <- motor %>%
+  filter(INSURED_VALUE > 0, PREMIUM > 0, CCM_TON > 0) %>%
+  transmute(
+    log_INSURED_VALUE = log(INSURED_VALUE),
+    log_PREMIUM       = log(PREMIUM),
+    PROD_YEAR,
+    VEHICLE_AGE,
+    log_CCM_TON       = log(CCM_TON),
+    DURATION_DAYS,
+    EXPOSURE_YR
+  ) %>%
+  na.omit()
+
+# Sample 5000 baris agar ggpairs tidak terlalu berat
+set.seed(42)
+sample_corr <- num_for_corr %>% sample_n(min(5000, nrow(.)))
+
+# Heatmap korelasi Pearson
+corr_mat <- cor(num_for_corr, use = "pairwise.complete.obs")
+
+corrplot(corr_mat,
+         method  = "color",
+         type    = "upper",
+         addCoef.col = "black",
+         number.cex  = 0.75,
+         tl.col  = "black",
+         tl.srt  = 45,
+         title   = "Gambar 22. Matriks Korelasi Variabel Numerik",
+         mar     = c(0, 0, 2, 0))
+```
+
+```{r ggpairs-subset, fig.width=11, fig.height=9}
+# Scatter matrix untuk subset variabel terpilih (tidak semua — agar terbaca)
+ggpairs(
+  sample_corr %>% select(log_INSURED_VALUE, log_PREMIUM, VEHICLE_AGE, log_CCM_TON),
+  title = "Gambar 23. Scatter Matrix Variabel Numerik Terpilih (n=5.000 sampel)"
+)
+```
+
+# ============================================================
+# BAGIAN 7 — RINGKASAN TEMUAN EDA
+# ============================================================
+
+```{r ringkasan-eda}
+cat("=================================================================\n")
+cat("RINGKASAN TEMUAN EDA — MOTOR INSURANCE DATA 2011–2018\n")
+cat("=================================================================\n\n")
+
+cat("1. CLAIM_IND (Variabel Respons Bab 7):\n")
+cat("   - Dataset sangat zero-inflated: ~7,5% polis mengajukan klaim\n")
+cat("   - Justifikasi penggunaan GLM Logistik untuk Bab 7 sangat kuat\n\n")
+
+cat("2. CLAIM_PAID (Variabel Respons Bab 8):\n")
+cat("   - Distribusi sangat right-skewed pada skala asli\n")
+cat("   - log(CLAIM_PAID) mendekati simetris => justifikasi log-link GLM Gamma\n\n")
+
+cat("3. Variabel Kategoris:\n")
+cat("   - SEX, INSR_TYPE, TYPE_VEHICLE, USAGE menunjukkan perbedaan claim rate\n")
+cat("   - MAKE memiliki 792 level => perlu grouping atau fct_lump sebelum modeling\n\n")
+
+cat("4. Variabel Numerik:\n")
+cat("   - INSURED_VALUE dan PREMIUM sangat right-skewed => transformasi log\n")
+cat("   - VEHICLE_AGE (turunan) menunjukkan pola claim rate yang menarik\n")
+cat("   - PROD_YEAR dan log_CCM_TON berkorelasi tinggi dengan VEHICLE_AGE\n\n")
+
+cat("5. Tren Temporal:\n")
+cat("   - Portofolio tumbuh dari 2011 ke puncak, kemudian stabilisasi\n")
+cat("   - Claim rate relatif stabil antar tahun (perlu dikonfirmasi plot)\n\n")
+
+cat("6. Implikasi Pemodelan:\n")
+cat("   - Bab 7 (Logistik): prediktor utama kandidat => SEX, INSR_TYPE,\n")
+cat("     TYPE_VEHICLE, USAGE, log_INSURED_VALUE, log_PREMIUM, VEHICLE_AGE\n")
+cat("   - Bab 8 (Gamma/Tweedie): respons log(CLAIM_PAID), subset polis berklaim\n")
+cat("   - Bab 6 (Poisson/NB): perlu membuat variabel CLAIM_COUNT per polis\n")
+```
