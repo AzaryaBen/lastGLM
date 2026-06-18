@@ -47,6 +47,6 @@ Di bawah ini adalah tabel ringkasan variabel yang digunakan dalam data gabungan 
 #v(0.5cm)
 
 == 3. Catatan Penting untuk Tahap Berikutnya
-* *Inkonsistensi Tipe Data:* Kolom `CARRYING_CAPACITY` terdeteksi terbaca sebagai teks (_string_) pada data 2014–2018 akibat adanya entri kosong atau karakter non-numerik (seperti "-" atau "NA")[cite: 25, 26, 27]. Kolom ini wajib dibersihkan dan dipastikan bertipe numerik sebelum digabungkan[cite: 25, 30].
-* *Multikolinieritas:* Variabel `CCM_TON` memiliki korelasi linear yang kuat dengan `TYPE_VEHICLE` atau `INSURED_VALUE`[cite: 10]. Pemeriksaan nilai *VIF (Variance Inflation Factor)* atau *Cramer's V* wajib dilakukan karena multikolinieritas dapat membuat standard error model GLM membengkak[cite: 11, 12].
-* *Potensi Overlapping:* Perlu dilakukan pemeriksaan _cleansing_ data pada tahun pembatas (2014) untuk memastikan tidak ada data transaksi yang terekspor dua kali agar tidak terjadi _over-counting_ pada bobot risiko model[cite: 35, 51, 52].
+*Inkonsistensi Tipe Data:* Kolom `CARRYING_CAPACITY` terdeteksi terbaca sebagai teks (_string_) pada data 2014–2018 akibat adanya entri kosong atau karakter non-numerik (seperti "-" atau "NA")[cite: 25, 26, 27]. Kolom ini wajib dibersihkan dan dipastikan bertipe numerik sebelum digabungkan[cite: 25, 30].
+*Multikolinieritas:* Variabel `CCM_TON` memiliki korelasi linear yang kuat dengan `TYPE_VEHICLE` atau `INSURED_VALUE`[cite: 10]. Pemeriksaan nilai *VIF (Variance Inflation Factor)* atau *Cramer's V* wajib dilakukan karena multikolinieritas dapat membuat standard error model GLM membengkak[cite: 11, 12].
+*Potensi Overlapping:* Perlu dilakukan pemeriksaan _cleansing_ data pada tahun pembatas (2014) untuk memastikan tidak ada data transaksi yang terekspor dua kali agar tidak terjadi _over-counting_ pada bobot risiko model[cite: 35, 51, 52].
