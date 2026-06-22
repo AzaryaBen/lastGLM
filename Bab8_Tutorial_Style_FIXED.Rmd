@@ -1,0 +1,680 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r library}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(scales)          # comma() untuk format angka di plot
+library(fitdistrplus)    # MLE distribusi marginal
+library(actuar)          # dinvgauss (mean/shape)
+library(SuppDists)       # dinvGauss (nu/lambda)
+library(EnvStats)
+library(statmod)         # qresiduals(), tweedie()
+library(tweedie)         # tweedie.profile(), AICtweedie()
+```
+
+Fokus GLM dengan respons kontinu di sini adalah memprediksi ekspektasi severitas
+klaim, yaitu $E[X]$ pada collective risk model. Seluruh analisis dilakukan pada
+subset CLAIM_PAID > 0 (severitas bersyarat klaim terjadi). Probabilitas/frekuensi
+klaim ditangani terpisah, lalu digabung melalui $E[S]=E[N]\times E[X]$.
+
+# Pemuatan Data
+
+Variabel yang dipakai: respons `CLAIM_PAID`; kategorik `SEX`, `INSR_TYPE`,
+`TYPE_VEHICLE`, `USAGE`, `MAKE`, `COVERAGE_TYPE`; numerik `INSURED_VALUE`,
+`PREMIUM`, `PROD_YEAR`.
+
+```{r import-data}
+data <- read_csv("vehicle_insurance_data/df_claims_bab8.csv") %>%
+  mutate(
+    SEX           = as.factor(SEX),
+    INSR_TYPE     = as.factor(INSR_TYPE),
+    TYPE_VEHICLE  = as.factor(TYPE_VEHICLE),
+    USAGE         = as.factor(USAGE),
+    MAKE          = as.factor(MAKE),
+    COVERAGE_TYPE = as.factor(COVERAGE_TYPE),
+    # Respons alternatif: log(CLAIM_PAID). Dipakai (dengan link identity) pada
+    # family IG/Tweedie karena CLAIM_PAID skala asli terlalu heavy-tailed untuk
+    # konvergensi IRWLS family tersebut. log(CLAIM_PAID) jauh lebih jinak.
+    LOG_CLAIM     = log(CLAIM_PAID)
+  )
+head(data)
+```
+
+```{r struktur-data}
+str(data)
+```
+
+```{r summary-data}
+summary(data)
+```
+
+---
+
+# Cek Distribusi Respons
+
+```{r mle-gamma}
+Gam <- summary(fitdist(data$CLAIM_PAID / 1e6, "gamma"))
+Gam$estimate
+```
+
+```{r moments-gamma}
+meandata     <- Gam$estimate[1] * (1 / Gam$estimate[2]) * 1e6; meandata
+variansidata <- Gam$estimate[1] * (1 / Gam$estimate[2])^2 * (1e6^2); variansidata
+scalebintang <- variansidata / meandata; scalebintang
+shapebintang <- meandata / scalebintang; shapebintang
+```
+
+Cek grafis kecocokan Gamma.
+
+```{r hist-gamma-scale}
+batas_atas_data <- max(data$CLAIM_PAID)
+lebar_bin       <- batas_atas_data / 5000
+xlim_tampil     <- quantile(data$CLAIM_PAID, 0.95)
+
+hist(data$CLAIM_PAID, xlim = c(0, xlim_tampil),
+     breaks = seq(0, batas_atas_data, lebar_bin), probability = TRUE,
+     main = "Histogram CLAIM_PAID dengan Gamma Fitted",
+     col = "cadetblue3", xlab = "CLAIM_PAID", ylab = "probability")
+curve(dgamma(x, shape = Gam$estimate["shape"],
+             scale = 1e6 / Gam$estimate["rate"]),
+      add = TRUE, lwd = 2, col = "red")
+```
+
+Lakukan hal serupa dengan Inverse Gaussian.
+
+```{r mle-invgauss}
+Gau <- summary(
+  fitdist(data$CLAIM_PAID / 1e6, "invgauss", lower = c(0, 0),
+          start = list(mean = mean(data$CLAIM_PAID / 1e6), shape = 5))
+)
+Gau$estimate
+```
+
+```{r moments-invgauss}
+meandata_ig <- Gau$estimate[1] * 1e6; meandata_ig
+variansi_ig <- (Gau$estimate[1]^3 / Gau$estimate[2]) * (1e6^2); variansi_ig
+lambdadata  <- meandata_ig^3 / variansi_ig; lambdadata
+```
+
+```{r hist-invgauss}
+hist(data$CLAIM_PAID, xlim = c(0, xlim_tampil),
+     breaks = seq(0, batas_atas_data, lebar_bin), probability = TRUE,
+     main = "Histogram CLAIM_PAID dengan Inverse Gaussian Fitted",
+     col = "cadetblue3", xlab = "CLAIM_PAID", ylab = "probability")
+curve(dinvGauss(x, nu = Gau$estimate["mean"] * 1e6, lambda = lambdadata),
+      add = TRUE, lwd = 2, col = "red")
+```
+
+```{r aic-bic}
+cat("AIC Gamma           :", Gam$aic, "\n")
+cat("AIC Inverse Gaussian:", Gau$aic, "\n")
+cat("BIC Gamma           :", Gam$bic, "\n")
+cat("BIC Inverse Gaussian:", Gau$bic, "\n")
+```
+
+Pada fit marginal, distribusi dengan AIC/BIC lebih kecil lebih cocok.
+
+---
+
+# Uji Kolmogorov-Smirnov
+
+```{r ks-test}
+n_klaim <- nrow(data)
+set.seed(44)
+ks.test(data$CLAIM_PAID,
+        rgamma(n_klaim, shape = Gam$estimate["shape"],
+               rate = Gam$estimate["rate"] / 1e6),
+        alternative = "two.sided")
+```
+
+Pada $n$ besar, KS hampir selalu menolak $H_0$ karena power sangat tinggi
+terhadap deviasi sekecil apa pun. Penolakan ini tidak mendiskualifikasi Gamma;
+keputusan akhir mengacu pada AIC/BIC dan kesesuaian teoretis fungsi varians
+$V(\mu)=\mu^2$.
+
+---
+
+# EDA: Pengelompokan Kategori Langka menjadi "Others"
+
+Kategori berfrekuensi sangat kecil dikelompokkan menjadi "Others" karena:
+(1) estimasi koefisiennya tidak stabil (SE besar/separasi); (2) berisiko hilang
+di salah satu sisi train/test sehingga `predict()` error. Pengelompokan dilakukan
+pada subset klaim positif, karena distribusi frekuensi bergeser setelah filter.
+
+```{r normalisasi-make}
+# Normalisasi ejaan merek utama sebelum grouping.
+data <- data %>%
+  mutate(MAKE = toupper(trimws(as.character(MAKE))),
+         MAKE = gsub("\\*$", "", MAKE),
+         MAKE = recode(MAKE,
+                       "T0Y0TA" = "TOYOTA", "TOYOTA*" = "TOYOTA",
+                       "MERCEEDES" = "MERCEDES", "MERCEEDICE" = "MERCEDES",
+                       "DAWOO" = "DAEWOO", "BAJAJI" = "BAJAJ",
+                       "LAND ROVER" = "LANDROVER", .default = MAKE),
+         MAKE = as.factor(MAKE))
+```
+
+```{r freq-tables-eda}
+vars_cat <- c("SEX", "INSR_TYPE", "TYPE_VEHICLE", "USAGE", "MAKE")
+cat("=== Distribusi Frekuensi (Subset Klaim Positif, sebelum grouping) ===\n")
+for (v in vars_cat) {
+  tbl <- data %>% count(!!sym(v)) %>%
+    mutate(Proporsi = round(n / sum(n) * 100, 2)) %>%
+    arrange(desc(n)) %>% as.data.frame()
+  cat(sprintf("\n-- %s --\n", v))
+  print(utils::head(tbl, 12), row.names = FALSE)  # tampilkan 12 teratas saja
+}
+```
+
+```{r grouping-others-eda}
+# Kategori < 3% digabung menjadi "Others" (parsimoni). Bucket "Others" tetap
+# punya n cukup besar sehingga estimasinya stabil.
+group_others <- function(df, var, threshold = 0.03) {
+  freq <- df %>% count(!!sym(var)) %>% mutate(prop = n / sum(n))
+  keep_cats <- freq %>% filter(prop >= threshold) %>% pull(!!sym(var))
+  df %>% mutate(!!sym(var) := factor(
+    ifelse(as.character(!!sym(var)) %in% as.character(keep_cats),
+           as.character(!!sym(var)), "Others")))
+}
+
+data <- data %>%
+  group_others("TYPE_VEHICLE") %>%
+  group_others("USAGE") %>%
+  group_others("MAKE") %>%
+  group_others("SEX") %>%
+  group_others("INSR_TYPE")
+
+cat("=== Kategori Setelah Pengelompokan (Threshold 3%) ===\n\n")
+for (v in vars_cat) {
+  tbl <- data %>% count(!!sym(v)) %>%
+    mutate(Proporsi = round(n / sum(n) * 100, 2)) %>%
+    arrange(desc(n)) %>% as.data.frame()
+  cat(sprintf("-- %s --\n", v)); print(tbl, row.names = FALSE); cat("\n")
+}
+```
+
+## Relevel: Base Level ke Kategori Proporsi Terbanyak
+
+Base disetel ke kategori dengan observasi terbanyak dan
+interpretasi koefisien lebih natural ("dibanding kategori paling umum").
+
+```{r relevel-base}
+set_base <- function(df, var, ref) {
+  if (ref %in% levels(df[[var]])) df[[var]] <- relevel(df[[var]], ref = ref)
+  df
+}
+data <- data %>%
+  set_base("SEX", "Legal Entity") %>%
+  set_base("INSR_TYPE", "Commercial") %>%
+  set_base("TYPE_VEHICLE", "Pick-up") %>%
+  set_base("USAGE", "Own Goods") %>%
+  set_base("MAKE", "TOYOTA") %>%
+  set_base("COVERAGE_TYPE", "Comprehensive_bundled")
+
+for (v in c(vars_cat, "COVERAGE_TYPE"))
+  cat(sprintf("Base level %-13s: %s\n", v, levels(data[[v]])[1]))
+```
+
+---
+
+# Pembagian Data Latih dan Uji
+
+Dua skema: random split 70:30 (default pemodelan) dan split-by-year
+(out-of-time, sebagai sensitivity check terhadap pergeseran temporal).
+
+```{r train-test-split}
+set.seed(42)
+train_idx  <- sample(seq_len(nrow(data)), size = round(0.70 * nrow(data)))
+train_data <- data[train_idx, ]
+test_data  <- data[-train_idx, ]
+cat("=== Random Split 70:30 ===\n")
+cat("Baris train:", nrow(train_data), " | Baris test:", nrow(test_data), "\n")
+
+data <- data %>% mutate(YEAR = as.integer(format(as.Date(INSR_BEGIN), "%Y")))
+cat("\n=== Distribusi Tahun (INSR_BEGIN) ===\n"); print(table(data$YEAR))
+tahun_test <- max(data$YEAR, na.rm = TRUE)
+train_data_byyear <- data %>% filter(YEAR != tahun_test)
+test_data_byyear  <- data %>% filter(YEAR == tahun_test)
+cat("\nTahun test out-of-time:", tahun_test,
+    "| train:", nrow(train_data_byyear), "| test:", nrow(test_data_byyear), "\n")
+```
+
+```{r safety-check}
+# pastikan tidak ada NA/Inf pada variabel modeling. step() gagal jika ada NA/NaN/Inf.
+vars_model <- c("CLAIM_PAID", "LOG_CLAIM", "INSURED_VALUE", "PREMIUM",
+                "PROD_YEAR", "SEX", "INSR_TYPE", "TYPE_VEHICLE", "USAGE",
+                "MAKE", "COVERAGE_TYPE")
+train_data <- train_data[complete.cases(train_data[, vars_model]) &
+                           is.finite(train_data$LOG_CLAIM), ]
+cat("Baris train final untuk modeling:", nrow(train_data), "\n")
+```
+
+Dua pendekatan pemodelan disajikan sebagai pembanding langsung:
+
+- Model 1 — `CLAIM_PAID` (skala asli) dengan log link.
+- Model 2 — `log(CLAIM_PAID)` dengan identity link.
+
+Penting (perbandingan AIC). AIC hanya boleh dibandingkan antar model dengan
+respons skala sama. Karena Model 1 memodelkan `CLAIM_PAID` sedangkan Model 2,
+Tweedie, dan IG memodelkan `log(CLAIM_PAID)`, AIC Model 1 tidak dibandingkan
+dengan yang lain. Model 1 hanya dibandingkan via metrik out-of-sample (skala asli,
+setelah back-transform — yang memang sebanding lintas pendekatan).
+
+# Model 1 — Gamma, CLAIM_PAID + Log Link
+
+```{r model1}
+model1 <- step(
+  glm(CLAIM_PAID ~ SEX + INSR_TYPE + TYPE_VEHICLE + USAGE + MAKE +
+        INSURED_VALUE + PREMIUM + PROD_YEAR + COVERAGE_TYPE,
+      family = Gamma(link = "log"), data = train_data),
+  direction = "both", trace = FALSE)
+summary(model1)
+```
+
+# Model 2 — Gamma, log(CLAIM_PAID) + Identity Link
+
+```{r model2}
+model2 <- step(
+  glm(LOG_CLAIM ~ SEX + INSR_TYPE + TYPE_VEHICLE + USAGE + MAKE +
+        INSURED_VALUE + PREMIUM + PROD_YEAR + COVERAGE_TYPE,
+      family = Gamma(link = "identity"), data = train_data),
+  direction = "both", trace = FALSE)
+summary(model2)
+```
+
+---
+
+# Selang Kepercayaan
+
+## SK Koefisien (Wald)
+
+
+```{r confint-coef}
+head(confint.default(model1, level = 0.95), 12)
+head(confint.default(model2, level = 0.95), 12)
+```
+
+## SK Mean
+
+```{r confint-mean}
+ci_mean <- function(model, newdata, z = 1.96) {
+  # Buang koefisien NA (aliased akibat singularitas)
+  beta <- coef(model); beta <- beta[!is.na(beta)]
+  # Design matrix di newdata, pakai level factor dari data training
+  tt <- delete.response(terms(model))
+  mm <- model.matrix(tt, data = newdata, xlev = model$xlevels)
+  mm <- mm[, names(beta), drop = FALSE]        # selaraskan kolom dgn beta
+  eta <- as.vector(mm %*% beta)                # linear predictor
+  V   <- vcov(model)[names(beta), names(beta)] # cov koefisien (tanpa NA)
+  se  <- sqrt(rowSums((mm %*% V) * mm))        # SE eta = sqrt(diag(mm V mm'))
+  data.frame(fit = exp(eta),
+             lwr = exp(eta - z * se),
+             upr = exp(eta + z * se))
+}
+# Model 1: exp(eta) = mean klaim. Model 2: exp(eta) = estimasi median klaim.
+cbind(head(ci_mean(model1, test_data)),
+      CLAIM_PAID_aktual = head(test_data$CLAIM_PAID))
+cbind(head(ci_mean(model2, test_data)),
+      CLAIM_PAID_aktual = head(test_data$CLAIM_PAID))
+```
+
+---
+
+# Analysis of Deviance 
+
+```{r anova-model1}
+anova(model1, test = "Chisq")
+```
+
+```{r anova-model2}
+anova(model2, test = "Chisq")
+```
+
+---
+
+# Tweedie GLM — Penentuan Parameter $p$
+
+Pada notasi Tweedie, $V(\mu)=\phi\mu^p$. Rezim $1<p<2$ (Poisson-gamma, ada massa di
+$Y=0$); $p>2$ (positif murni). **Argumen $p\ge2$ itu berlaku untuk CLAIM_PAID** yang
+sudah difilter positif. Namun di sini kita memodelkan **`log(CLAIM_PAID)`** (demi
+konvergensi IG/Tweedie), yang jauh lebih ringan ekornya — sehingga $\hat p$ hasil
+profiling pada skala log **bisa < 2**, dan itu konsisten secara teoretis. Grid
+mencakup $[1{,}5, 4]$ agar bisa menjangkau kedua rezim; keputusan $p$ diserahkan ke
+data, lalu dibandingkan dengan $p=2{,}5$ versi paper sebagai *sensitivity analysis*.
+
+```{r tweedie-profile, cache=TRUE}
+set.seed(42)
+# Profiling p disederhanakan ke prediktor numerik + COVERAGE_TYPE (level besar),
+# mengeluarkan kategorik langka yang bisa hilang dari subsample. Valid karena p
+# orthogonal terhadap struktur mean (Cox & Reid 1987; Dunn & Smyth 2005).
+idx_sample  <- sample(nrow(train_data), min(20000, nrow(train_data)))
+vars_check  <- c("LOG_CLAIM", "INSURED_VALUE", "PREMIUM", "PROD_YEAR", "COVERAGE_TYPE")
+data_sample <- train_data[idx_sample, ]
+data_sample <- data_sample[complete.cases(data_sample[, vars_check]), ]
+
+tw_profile <- tweedie.profile(
+  LOG_CLAIM ~ INSURED_VALUE + PREMIUM + PROD_YEAR + COVERAGE_TYPE,
+  p.vec = seq(1.5, 4, by = 0.25), data = data_sample,
+  method = "series", do.smooth = FALSE, do.plot = TRUE)
+
+p_opt <- tw_profile$p.max
+cat("Parameter p optimal (profiling LOG_CLAIM):", p_opt, "\n")
+ci_p <- tryCatch(tw_profile$ci, error = function(e) NA)
+if (!is.null(ci_p) && all(is.finite(ci_p)))
+  cat("Perkiraan 95% CI p:", round(ci_p, 3), "\n") else
+  cat("CI p tidak tersedia (do.smooth=FALSE); p.max di grid:", p_opt, "\n")
+if (isTRUE(p_opt <= 1.5))
+  cat("CATATAN: p.max menempel di batas bawah grid -> optimum mungkin < 1.5,\n",
+      "  konsisten dengan log(CLAIM_PAID) yang berekor ringan.\n")
+```
+
+## Model Tweedie (Identity Link pada LOG_CLAIM)
+
+`family = tweedie()` non-integer tidak punya AIC closed-form, sehingga slot `$aic`
+di-patch agar `step()` punya kriteria numerik.
+
+```{r model-tweedie}
+make_tweedie_aic <- function(p) {
+  fam <- tweedie(var.power = p, link.power = 1)  # link.power=1 -> identity
+  fam$aic <- function(y, n, mu, wt, dev) {
+    disp <- dev / sum(wt)
+    ll   <- sum(wt * log(tweedie::dtweedie(y = y, power = p, mu = mu, phi = disp)))
+    -2 * ll + 2
+  }
+  fam
+}
+
+model_tweedie <- step(
+  glm(LOG_CLAIM ~ SEX + INSR_TYPE + TYPE_VEHICLE + USAGE + MAKE +
+        INSURED_VALUE + PREMIUM + PROD_YEAR + COVERAGE_TYPE,
+      family = make_tweedie_aic(p_opt), data = train_data),
+  direction = "both", trace = FALSE)
+summary(model_tweedie)
+```
+
+```{r model-tweedie-25}
+model_tweedie_25 <- step(
+  glm(LOG_CLAIM ~ SEX + INSR_TYPE + TYPE_VEHICLE + USAGE + MAKE +
+        INSURED_VALUE + PREMIUM + PROD_YEAR + COVERAGE_TYPE,
+      family = make_tweedie_aic(2.5), data = train_data),
+  direction = "both", trace = FALSE)
+
+summary(model_tweedie_25)
+cat("AIC Tweedie p =", p_opt, ":", AICtweedie(model_tweedie), "\n")
+cat("AIC Tweedie p = 2.5  :", AICtweedie(model_tweedie_25), "\n")
+```
+
+```{r anova-tweedie}
+anova(model_tweedie, test = "Chisq")
+```
+
+```{r dispersion-correction}
+n_obs <- nrow(train_data)
+q_params <- length(coef(model_tweedie))
+phi_hat <- summary(model_tweedie)$dispersion
+phi_corrected <- (n_obs / (n_obs - q_params)) * phi_hat
+cat("Dispersion mentah     :", round(phi_hat, 4), "\n")
+cat("Dispersion terkoreksi :", round(phi_corrected, 4), "(n/(n-q), Dunn & Smyth 2005)\n")
+```
+
+---
+
+# Model Inverse Gaussian — Pembanding (Identity Link pada LOG_CLAIM)
+
+```{r model-invgaussian}
+model_ig_full <- glm(
+  LOG_CLAIM ~ SEX + INSR_TYPE + TYPE_VEHICLE + USAGE + MAKE +
+    INSURED_VALUE + PREMIUM + PROD_YEAR + COVERAGE_TYPE,
+  family = inverse.gaussian(link = "identity"), data = train_data)
+model_invgaussian <- step(model_ig_full, direction = "both", trace = FALSE)
+summary(model_invgaussian)
+```
+
+```{r anova-ig}
+anova(model_invgaussian, test = "Chisq")
+```
+
+## Perbandingan Tiga Model pada Skala log(CLAIM_PAID)
+
+Ketiganya memodelkan respons LOG_CLAIM, sehingga AIC/deviance sebanding
+(Tweedie dengan caveat: AIC-nya dari ekspansi deret, bukan closed-form).
+
+```{r compare-three-models}
+cat("=== Perbandingan AIC & Deviance (semua pada LOG_CLAIM) ===\n\n")
+cat(sprintf("%-20s %15s %15s %10s\n", "Model", "AIC", "Deviance", "df.resid"))
+cat(sprintf("%-20s %15.2f %15.4f %10d\n",
+            "Gamma (Model 2)", AIC(model2), deviance(model2), df.residual(model2)))
+cat(sprintf("%-20s %15.2f %15.4f %10d\n",
+            "Tweedie", AICtweedie(model_tweedie),
+            deviance(model_tweedie), df.residual(model_tweedie)))
+cat(sprintf("%-20s %15.2f %15.4f %10d\n",
+            "Inverse Gaussian", AIC(model_invgaussian),
+            deviance(model_invgaussian), df.residual(model_invgaussian)))
+cat("\nDispersion -- Gamma:", round(summary(model2)$dispersion, 4),
+    "| Tweedie:", round(summary(model_tweedie)$dispersion, 4),
+    "| IG:", round(summary(model_invgaussian)$dispersion, 4), "\n")
+```
+
+```{r kesimpulan-perbandingan, echo=FALSE}
+aic2  <- AIC(model2); aicig <- AIC(model_invgaussian)
+cat("Berdasarkan AIC (skala log), antara Gamma (Model 2) dan Inverse Gaussian,\n")
+cat("yang lebih baik adalah:", ifelse(aic2 < aicig, "Gamma", "Inverse Gaussian"), "\n")
+cat("Tweedie sebagai generalisasi: jika deviance-nya jauh lebih kecil pada df\n")
+cat("yang sama, p != 2 lebih sesuai. Perhatikan: AIC Model 1 (skala CLAIM_PAID)\n")
+cat("TIDAK disertakan di sini karena beda skala respons -- dibandingkan via RMSE.\n")
+```
+
+---
+
+# Evaluasi Out-of-Sample
+
+## Skala Prediksi & Retransformation Bias
+
+Untuk model di skala log (identity link pada `LOG_CLAIM`), `predict(type="response")`
+mengembalikan $\widehat{E[\log Y]}$, sehingga balik ke skala asli butuh `exp()` satu kali:
+$\widehat{Y}=\exp(\widehat{E[\log Y]})$. Karena $\exp(E[\log Y])$ adalah estimator
+**median** (bukan mean) akibat ketaksamaan Jensen, diterapkan **koreksi smearing
+Duan (1983)**: kalikan prediksi dengan rata-rata $\exp(\text{residual})$ dari data
+**train** (bukan test, agar tidak bocor).
+
+```{r eval-functions}
+# Satu fungsi metrik (lengkap, termasuk metrik relatif skala-bebas)
+metrik_vec <- function(actual, pred) {
+  ok <- is.finite(actual) & is.finite(pred) & actual > 0 & pred > 0
+  a <- actual[ok]; p <- pred[ok]
+  c(RMSE     = sqrt(mean((a - p)^2)),
+    MAE      = mean(abs(a - p)),
+    MAPE     = mean(abs((a - p) / a)) * 100,
+    MdAPE    = median(abs((a - p) / a)) * 100,   # robust terhadap ekor
+    RMSLE    = sqrt(mean((log(p + 1) - log(a + 1))^2)),
+    nRMSE    = sqrt(mean((a - p)^2)) / mean(a),
+    RelMSE   = sum((a - p)^2) / sum((a - mean(a))^2),
+    PseudoR2 = 1 - sum((a - p)^2) / sum((a - mean(a))^2))
+}
+
+# Satu wrapper: hitung prediksi (back-transform jika perlu) lalu metrik
+evaluasi_model <- function(model, newdata, log_response, smear_factor = 1,
+                           actual_col = "CLAIM_PAID") {
+  eta  <- predict(model, newdata = newdata, type = "response")
+  pred <- if (log_response) exp(eta) * smear_factor else eta
+  metrik_vec(newdata[[actual_col]], pred)
+}
+
+# Smearing factor: rata-rata exp(response residual) pada TRAIN. Untuk identity
+# link, response residual = LOG_CLAIM - fitted; exp-nya = Duan smearing.
+hitung_smear <- function(model)
+  mean(exp(residuals(model, type = "response")), na.rm = TRUE)
+```
+
+```{r eval-random}
+smear_gamma_log <- hitung_smear(model2)
+smear_tweedie   <- hitung_smear(model_tweedie)
+smear_invg      <- hitung_smear(model_invgaussian)
+
+ev <- rbind(
+  `Model 1 Gamma (CLAIM_PAID, log link)` =
+    evaluasi_model(model1, test_data, log_response = FALSE),
+  `Model 2 Gamma (log, smeared)` =
+    evaluasi_model(model2, test_data, TRUE, smear_gamma_log),
+  `Tweedie (log, smeared)` =
+    evaluasi_model(model_tweedie, test_data, TRUE, smear_tweedie),
+  `Inverse Gaussian (log, smeared)` =
+    evaluasi_model(model_invgaussian, test_data, TRUE, smear_invg),
+  `Model 2 Gamma (log, RAW)` =
+    evaluasi_model(model2, test_data, TRUE, 1),
+  `Tweedie (log, RAW)` =
+    evaluasi_model(model_tweedie, test_data, TRUE, 1),
+  `Inverse Gaussian (log, RAW)` =
+    evaluasi_model(model_invgaussian, test_data, TRUE, 1)
+)
+ev_show <- as.data.frame(round(ev, 3))
+ev_show$RMSE <- format(round(ev[, "RMSE"]), big.mark = ",")
+ev_show$MAE  <- format(round(ev[, "MAE"]),  big.mark = ",")
+print(ev_show)
+
+cat("\nSmearing factor -- Gamma:", round(smear_gamma_log, 4),
+    "| Tweedie:", round(smear_tweedie, 4), "| IG:", round(smear_invg, 4), "\n")
+cat("\nBaca metrik relatif: RelMSE ~ 1 (PseudoR2 ~ 0) berarti model nyaris\n")
+cat("setara menebak rata-rata -- konsisten dgn korelasi prediktor-respons lemah\n")
+cat("di EDA. MdAPE dan RMSLE lebih informatif daripada MAPE pada data berekor berat.\n")
+```
+
+## Diagnostik Residual
+
+```{r eval-resid-dev-model-1}
+dev_res <- residuals(model1, type = "deviance")
+par(mfrow = c(1, 2))
+plot(fitted(model1), dev_res, xlab = "Fitted", ylab = "Deviance residual",
+     main = "Residual vs Fitted", pch = 16, col = rgb(0,0,0,0.2)); abline(h = 0, lty = 2)
+qqnorm(dev_res, main = "Q-Q Deviance Residual"); qqline(dev_res, col = "red")
+par(mfrow = c(1, 1))
+# Ambang |delta| > 2 (bukan 1): residual deviance terstandardisasi ~ N(0,1),
+# sehingga ~5% teratas berada di |delta| > 2 untuk model yang cocok.
+cat("Proporsi |delta_i| > 2:", round(mean(abs(dev_res) > 2) * 100, 2), "%\n")
+```
+
+```{r eval-resid-dev-model-2}
+dev_res <- residuals(model2, type = "deviance")
+par(mfrow = c(1, 2))
+plot(fitted(model2), dev_res, xlab = "Fitted", ylab = "Deviance residual",
+     main = "Residual vs Fitted", pch = 16, col = rgb(0,0,0,0.2)); abline(h = 0, lty = 2)
+qqnorm(dev_res, main = "Q-Q Deviance Residual"); qqline(dev_res, col = "red")
+par(mfrow = c(1, 1))
+# Ambang |delta| > 2 (bukan 1): residual deviance terstandardisasi ~ N(0,1),
+# sehingga ~5% teratas berada di |delta| > 2 untuk model yang cocok.
+cat("Proporsi |delta_i| > 2:", round(mean(abs(dev_res) > 2) * 100, 2), "%\n")
+```
+
+```{r eval-resid-dev-tweedie}
+dev_res <- residuals(model_tweedie, type = "deviance")
+par(mfrow = c(1, 2))
+plot(fitted(model_tweedie), dev_res, xlab = "Fitted", ylab = "Deviance residual",
+     main = "Residual vs Fitted", pch = 16, col = rgb(0,0,0,0.2)); abline(h = 0, lty = 2)
+qqnorm(dev_res, main = "Q-Q Deviance Residual"); qqline(dev_res, col = "red")
+par(mfrow = c(1, 1))
+# Ambang |delta| > 2 (bukan 1): residual deviance terstandardisasi ~ N(0,1),
+# sehingga ~5% teratas berada di |delta| > 2 untuk model yang cocok.
+cat("Proporsi |delta_i| > 2:", round(mean(abs(dev_res) > 2) * 100, 2), "%\n")
+```
+```{r eval-resid-dev-tweedie-2,5}
+dev_res <- residuals(model_tweedie_25, type = "deviance")
+par(mfrow = c(1, 2))
+plot(fitted(model_tweedie_25), dev_res, xlab = "Fitted", ylab = "Deviance residual",
+     main = "Residual vs Fitted", pch = 16, col = rgb(0,0,0,0.2)); abline(h = 0, lty = 2)
+qqnorm(dev_res, main = "Q-Q Deviance Residual"); qqline(dev_res, col = "red")
+par(mfrow = c(1, 1))
+# Ambang |delta| > 2 (bukan 1): residual deviance terstandardisasi ~ N(0,1),
+# sehingga ~5% teratas berada di |delta| > 2 untuk model yang cocok.
+cat("Proporsi |delta_i| > 2:", round(mean(abs(dev_res) > 2) * 100, 2), "%\n")
+```
+```{r eval-resid-dev-ig}
+dev_res <- residuals(model_ig_full, type = "deviance")
+par(mfrow = c(1, 2))
+plot(fitted(model_ig_full), dev_res, xlab = "Fitted", ylab = "Deviance residual",
+     main = "Residual vs Fitted", pch = 16, col = rgb(0,0,0,0.2)); abline(h = 0, lty = 2)
+qqnorm(dev_res, main = "Q-Q Deviance Residual"); qqline(dev_res, col = "red")
+par(mfrow = c(1, 1))
+# Ambang |delta| > 2 (bukan 1): residual deviance terstandardisasi ~ N(0,1),
+# sehingga ~5% teratas berada di |delta| > 2 untuk model yang cocok.
+cat("Proporsi |delta_i| > 2:", round(mean(abs(dev_res) > 2) * 100, 2), "%\n")
+```
+
+## Sensitivity Check: Split by Year (Out-of-Time)
+
+```{r eval-byyear}
+train_byyear <- train_data_byyear[complete.cases(
+  train_data_byyear[, vars_model]) & is.finite(train_data_byyear$LOG_CLAIM), ]
+model1_byyear <- step(
+  glm(CLAIM_PAID ~ SEX + INSR_TYPE + TYPE_VEHICLE + USAGE + MAKE +
+        INSURED_VALUE + PREMIUM + PROD_YEAR + COVERAGE_TYPE,
+      family = Gamma(link = "log"), data = train_byyear),
+  direction = "both", trace = FALSE)
+
+ev_random <- evaluasi_model(model1, test_data, FALSE)
+ev_byyear <- evaluasi_model(model1_byyear, test_data_byyear, FALSE)
+cat("=== RMSE: Random Split vs Split by Year (Gamma, CLAIM_PAID asli) ===\n")
+cat(sprintf("%-26s : %s\n", "Random Split 70:30",
+            format(round(ev_random["RMSE"]), big.mark = ",")))
+cat(sprintf("%-26s : %s\n", "Split by Year (out-of-time)",
+            format(round(ev_byyear["RMSE"]), big.mark = ",")))
+cat("\nJika RMSE by-year jauh lebih besar -> model kurang stabil terhadap\n")
+cat("pergeseran temporal (inflasi klaim/portofolio), informasi yang tidak\n")
+cat("tertangkap random split.\n")
+```
+
+## Visualisasi Prediksi vs Aktual
+
+```{r plot-pred-vs-actual, fig.width=8, fig.height=6}
+pred_gamma <- predict(model1, newdata = test_data, type = "response")
+ggplot(data.frame(Aktual = test_data$CLAIM_PAID, Prediksi = pred_gamma),
+       aes(Aktual, Prediksi)) +
+  geom_point(alpha = 0.2, color = "#4472C4") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "red", linewidth = 1) +
+  scale_x_log10(labels = comma) + scale_y_log10(labels = comma) +
+  labs(title = "Prediksi vs Aktual CLAIM_PAID (Model 1 Gamma)",
+       subtitle = "Skala log-log; garis merah = prediksi sempurna",
+       x = "CLAIM_PAID Aktual", y = "CLAIM_PAID Prediksi") +
+  theme_minimal()
+```
+```{r}
+# Prediksi back-transformed (dengan smearing) untuk Model 2 / Tweedie / IG
+pred_m2  <- exp(predict(model2, newdata = test_data, type = "response")) * smear_gamma_log
+pred_tw  <- exp(predict(model_tweedie, newdata = test_data, type = "response")) * smear_tweedie
+pred_ig  <- exp(predict(model_invgaussian, newdata = test_data, type = "response")) * smear_invg
+
+plot_df <- bind_rows(
+  data.frame(Model = "Model 1: Gamma (CLAIM_PAID, log link)",
+             Aktual = test_data$CLAIM_PAID, Prediksi = pred_gamma),
+  data.frame(Model = "Model 2: Gamma (log, smeared)",
+             Aktual = test_data$CLAIM_PAID, Prediksi = pred_m2),
+  data.frame(Model = "Tweedie (log, smeared)",
+             Aktual = test_data$CLAIM_PAID, Prediksi = pred_tw),
+  data.frame(Model = "Inverse Gaussian (log, smeared)",
+             Aktual = test_data$CLAIM_PAID, Prediksi = pred_ig)
+)
+
+ggplot(plot_df, aes(Aktual, Prediksi)) +
+  geom_point(alpha = 0.15, color = "#4472C4") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+              color = "red", linewidth = 0.8) +
+  scale_x_log10(labels = comma) + scale_y_log10(labels = comma) +
+  facet_wrap(~ Model, ncol = 2) +
+  labs(title = "Prediksi vs Aktual CLAIM_PAID — Perbandingan Keempat Model",
+       subtitle = "Skala log-log; garis merah = prediksi sempurna",
+       x = "CLAIM_PAID Aktual", y = "CLAIM_PAID Prediksi") +
+  theme_minimal(base_size = 10)
+
+
+cbind(head(pred_tw),
+      CLAIM_PAID_aktual = head(test_data$CLAIM_PAID))
+cbind(head(pred_ig),
+      CLAIM_PAID_aktual = head(test_data$CLAIM_PAID))
+```
