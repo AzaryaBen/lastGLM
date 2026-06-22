@@ -1,0 +1,727 @@
+---
+title: "GLM Gamma / Inverse Gaussian / Tweedie — Severitas Klaim Asuransi Kendaraan"
+author: "Azarya Benhanan Isriyanto"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r import library}
+# Memanggil library yang diperlukan
+library(readr)
+library(dplyr)
+library(janitor)
+library(tidyr)
+```
+
+---
+
+# Penggabungan Data Periode 2011-2014 dan 2014-2018
+
+## Import Kedua Data
+
+```{r import kedua data}
+df_11_14 <- read_csv("vehicle_insurance_data/motor_data11-14lats.csv")
+df_14_18 <- read_csv("vehicle_insurance_data/motor_data14-2018.csv")
+```
+
+## Validasi Struktur Kolom
+
+```{r validasi struktur}
+# Validasi awal struktur kolom sebelum digabungkan
+# Memastikan jumlah kolom dan nama kolom di kedua dataset sama persis
+if (identical(names(df_11_14), names(df_14_18))) {
+  print("Aman: Struktur kolom kedua file identik. Proses penggabungan dapat dilanjutkan.")
+} else {
+  warning("Peringatan: Ada perbedaan nama atau urutan kolom! Periksa kembali dengan colnames().")
+}
+```
+
+## Penyamaan Tipe Data Sebelum Penggabungan
+
+Justifikasi: `CARRYING_CAPACITY` terbaca dengan tipe berbeda di kedua file
+sehingga konversi `as.numeric()` perlu dilakukan di kedua sisi sebelum penggabungan. 
+
+```{r samakan tipe carrying capacity}
+df_11_14 <- df_11_14 %>%
+  mutate(CARRYING_CAPACITY = as.numeric(CARRYING_CAPACITY))
+df_14_18 <- df_14_18 %>%
+  mutate(CARRYING_CAPACITY = as.numeric(CARRYING_CAPACITY))
+```
+
+## Penggabungan dataset
+
+```{r gabung data}
+motor_data_all <- bind_rows(df_11_14, df_14_18)
+
+print(paste("Total baris Periode 2011-2014:", nrow(df_11_14)))
+print(paste("Total baris Periode 2014-2018:", nrow(df_14_18)))
+print(paste("Total baris setelah digabung:", nrow(motor_data_all)))
+```
+
+```{r export data gabungan}
+# Export data yang sudah digabungkan menjadi 1 file master baru
+write_csv(motor_data_all, "vehicle_insurance_data/motor_data_master_11_18.csv")
+```
+
+```{r dimensi awal}
+cat("Dimensi awal dataset:", nrow(motor_data_all), "baris x", ncol(motor_data_all), "kolom\n")
+str(motor_data_all)
+```
+
+---
+
+# Pre-Modelling — Data Cleaning
+
+## Eksplorasi Awal Dataset Master
+
+```{r summary-awal}
+summary(motor_data_all)
+```
+
+```{r alias motor}
+# Menggunakan nama "motor" agar konsisten dengan tahap-tahap berikutnya
+motor <- motor_data_all
+```
+
+## Penanganan Duplikasi
+
+Seluruh baris duplikat memiliki CLAIM_PAID = NA (tidak ada
+klaim), sehingga penghapusan tidak menghilangkan informasi klaim apapun.
+
+```{r duplikasi}
+n_duplikat <- sum(duplicated(motor))
+cat("Jumlah baris duplikat:", n_duplikat, "\n")
+
+# Verifikasi: semua duplikat memiliki CLAIM_PAID = NA
+duplikat_rows <- motor[duplicated(motor) | duplicated(motor, fromLast = TRUE), ]
+cat("Di antara duplikat, proporsi CLAIM_PAID = NA:",
+    mean(is.na(duplikat_rows$CLAIM_PAID)), "\n")
+
+motor <- motor %>% distinct()
+cat("Baris setelah deduplikasi:", nrow(motor), "\n")
+```
+
+## Penghapusan Kolom Bermasalah
+
+### CARRYING_CAPACITY dan SEATS_NUM
+
+CARRYING_CAPACITY: >75% missing — melampaui ambang batas imputasi yang aman
+SEATS_NUM: proporsi signifikan bernilai 0 (tidak valid secara domain —
+tidak ada kendaraan berpenumpang 0 kursi)
+
+```{r hapus-kolom-bermasalah}
+cat("CARRYING_CAPACITY — % missing:",
+    round(mean(is.na(motor$CARRYING_CAPACITY)) * 100, 2), "%\n")
+
+n_seats_zero <- sum(motor$SEATS_NUM == 0, na.rm = TRUE)
+pct_seats_zero <- mean(motor$SEATS_NUM == 0, na.rm = TRUE) * 100
+cat("SEATS_NUM bernilai 0:", n_seats_zero,
+    "baris (", round(pct_seats_zero, 2), "%)\n")
+
+motor <- motor %>% dplyr::select(-CARRYING_CAPACITY, -SEATS_NUM)
+cat("Kolom tersisa setelah penghapusan:", ncol(motor), "\n")
+```
+
+### EFFECTIVE_YR
+
+Banyak nilai tidak konsisten dengan periode data 2011–2018 (ada yang
+negatif, puluhan, dll.) menunjukkan kesalahan pengkodean yang tidak
+dapat diperbaiki. Di samping itu informasi tahun efektif sudah 
+terkandung dalam INSR_BEGIN yang lebih reliabel.
+
+```{r hapus-effective-yr}
+eff_num <- suppressWarnings(as.numeric(as.character(motor$EFFECTIVE_YR)))
+n_tidak_wajar <- sum(is.na(eff_num) | eff_num < 0 | eff_num > 99, na.rm = TRUE)
+cat("EFFECTIVE_YR dengan nilai tidak wajar:", n_tidak_wajar, "baris\n")
+
+motor <- motor %>% dplyr::select(-EFFECTIVE_YR)
+```
+
+## Konversi Tipe Data
+
+```{r konversi-tipe}
+motor <- motor %>%
+  mutate(
+    # Variabel kategorikal
+    SEX          = recode_factor(as.factor(SEX),
+                                 `0` = "Legal Entity",
+                                 `1` = "Male",
+                                 `2` = "Female"),
+    INSR_TYPE    = recode_factor(as.factor(INSR_TYPE),
+                                 `1201` = "Private",
+                                 `1202` = "Commercial",
+                                 `1204` = "Motor Trade Road Risk"),
+    TYPE_VEHICLE = as.factor(TYPE_VEHICLE),
+    MAKE         = as.factor(MAKE),
+    USAGE        = as.factor(USAGE),
+
+    # Variabel tanggal
+    INSR_BEGIN   = as.Date(INSR_BEGIN, format = "%d-%b-%y"),
+    INSR_END     = as.Date(INSR_END, format = "%d-%b-%y"),
+
+    # Variabel numerik
+    INSURED_VALUE = as.numeric(INSURED_VALUE),
+    PREMIUM       = as.numeric(PREMIUM),
+    CCM_TON       = as.numeric(CCM_TON),
+    CLAIM_PAID    = as.numeric(CLAIM_PAID)
+  )
+
+str(motor)
+```
+
+```{r verifikasi-insr-type}
+# Verifikasi: pastikan tidak ada kode INSR_TYPE di luar 1201/1202/1204
+# yang berubah jadi NA secara diam-diam akibat recode_factor()
+n_na_insr <- sum(is.na(motor$INSR_TYPE))
+cat("Jumlah NA pada INSR_TYPE setelah recode:", n_na_insr, "\n")
+
+if (n_na_insr > 0) {
+  cat("PERINGATAN: ada kode INSR_TYPE di luar 1201/1202/1204.\n")
+  cat("Cek kembali nilai unik sebelum recode untuk menentukan kategori tambahan.\n")
+} else {
+  cat("Aman: seluruh kode INSR_TYPE termasuk dalam 3 kategori paper.\n")
+}
+```
+
+## Tahap 2.5: Imputasi Missing Values
+
+Missing values ditangani dengan metode imputasi yang
+sesuai. Karena distribusi variabel asuransi umumnya right-skewed, digunakan
+median (bukan mean) untuk variabel numerik — median lebih robust terhadap
+nilai ekstrem. Untuk variabel kategoris, digunakan modus (kategori paling
+sering muncul).
+
+Proporsi missing pada variabel yang diimputasi sangat kecil, sehingga
+risiko bias imputasi dapat dianggap dapat diabaikan.
+
+CLAIM_PAID TIDAK diimputasi. Nilai NA pada CLAIM_PAID merupakan
+"structural zero" — bermakna "tidak ada klaim terjadi", bukan data yang
+hilang. Dalam pemodelan GLM logistik, NA akan dikonversi menjadi
+CLAIM_IND = 0.
+
+```{r audit-missing-sebelum-imputasi}
+missing_summary <- motor %>%
+  summarise(across(everything(), ~ mean(is.na(.)))) %>%
+  pivot_longer(everything(),
+               names_to  = "kolom",
+               values_to = "pct_missing") %>%
+  filter(pct_missing > 0) %>%
+  arrange(desc(pct_missing))
+
+print(missing_summary)
+```
+
+```{r imputasi}
+# Fungsi imputasi median untuk variabel numerik
+impute_median <- function(x) {
+  med <- median(x, na.rm = TRUE)
+  x[is.na(x)] <- med
+  return(x)
+}
+
+# Fungsi imputasi modus untuk variabel kategoris
+impute_modus <- function(x) {
+  modus <- names(sort(table(x), decreasing = TRUE))[1]
+  x[is.na(x)] <- modus
+  return(x)
+}
+
+motor <- motor %>%
+  mutate(
+    # Imputasi numerik dengan median
+    PREMIUM   = impute_median(PREMIUM),
+    PROD_YEAR = impute_median(as.numeric(PROD_YEAR)),
+    CCM_TON   = impute_median(CCM_TON),
+
+    # Imputasi kategoris dengan modus
+    MAKE      = impute_modus(as.character(MAKE)),
+    MAKE      = as.factor(MAKE)
+  )
+
+# Verifikasi: missing hanya tersisa di CLAIM_PAID (structural zero)
+missing_pasca <- motor %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(),
+               names_to  = "kolom",
+               values_to = "n_missing") %>%
+  filter(n_missing > 0)
+
+print(missing_pasca)
+cat("\nCatatan: Missing pada CLAIM_PAID adalah structural zero (polis tanpa klaim),",
+    "bukan missing value sejati.\n")
+```
+
+## Validasi Business Logic
+
+### Durasi Polis (INSR_BEGIN dan INSR_END)
+
+Baris dengan INSR_END <= INSR_BEGIN dihapus karena durasi nol
+atau negatif tidak informatif dan log(0) tidak terdefinisi sebagai offset
+exposure dalam GLM. Hal ini berlaku baik untuk polis tanpa klaim maupun
+polis dengan klaim aktif, karena exposure (durasi) tidak boleh bernilai 0
+pada pemodelan tarif GLM standar.
+
+```{r validasi-tanggal}
+motor <- motor %>%
+  mutate(DURATION_DAYS = as.numeric(difftime(INSR_END, INSR_BEGIN, units = "days")))
+
+cat("Baris dengan durasi <= 0 hari (INSR_END <= INSR_BEGIN):\n")
+motor %>%
+  filter(DURATION_DAYS <= 0) %>%
+  summarise(
+    total_baris = n(),
+    ada_klaim   = sum(!is.na(CLAIM_PAID)),
+    tanpa_klaim = sum(is.na(CLAIM_PAID))
+  ) %>%
+  print()
+
+motor <- motor %>% filter(DURATION_DAYS > 0)
+cat("Baris setelah filter durasi:", nrow(motor), "\n")
+```
+
+### Nilai Tidak Mungkin Negatif
+
+```{r validasi-negatif}
+motor %>%
+  filter(INSURED_VALUE < 0 | PREMIUM < 0 | (!is.na(CLAIM_PAID) & CLAIM_PAID < 0)) %>%
+  nrow() %>%
+  cat("Baris dengan nilai negatif tidak wajar:", ., "\n")
+```
+
+### Tahun Produksi Kendaraan
+
+```{r validasi-prod-year}
+motor %>%
+  filter(PROD_YEAR < 1900 | PROD_YEAR > 2019) %>%
+  nrow() %>%
+  cat("Baris dengan PROD_YEAR tidak wajar (<1900 atau >2019):", ., "\n")
+```
+
+### Validasi CLAIM_PAID terhadap INSURED_VALUE
+
+CLAIM_PAID > INSURED_VALUE adalah valid secara kontraktual mencerminkan comprehensive coverage.
+Kasus CLAIM_PAID = INSURED_VALUE juga valid — ini adalah total loss.
+Polis dengan INSURED_VALUE = 0 adalah polis TPL-only (tanpa komponen
+comprehensive).
+
+```{r validasi-klaim}
+motor %>%
+  filter(!is.na(CLAIM_PAID) & INSURED_VALUE == 0) %>%
+  nrow() %>%
+  cat("Polis TPL-only (INSURED_VALUE = 0) dengan klaim:", ., "\n")
+
+motor %>%
+  filter(!is.na(CLAIM_PAID) & INSURED_VALUE > 0 & CLAIM_PAID > INSURED_VALUE) %>%
+  nrow() %>%
+  cat("Polis komprehensif dengan CLAIM_PAID > INSURED_VALUE (valid karena bundled):", ., "\n")
+
+# Flag jenis coverage
+motor <- motor %>%
+  mutate(COVERAGE_TYPE = ifelse(INSURED_VALUE == 0, "TPL_only", "Comprehensive_bundled"))
+```
+
+### Distribusi Variabel SEX
+
+```{r validasi-sex}
+cat("Distribusi SEX:\n")
+table(motor$SEX, useNA = "always")
+```
+
+## Rekayasa Fitur untuk Pemodelan
+
+```{r feature-engineering}
+motor <- motor %>%
+  mutate(
+    # Indikator klaim biner — variabel respons untuk GLM Logistik (Bab 7)
+    CLAIM_IND = as.factor(ifelse(!is.na(CLAIM_PAID) & CLAIM_PAID > 0, 1, 0)),
+
+    # Exposure dalam satuan tahun — offset untuk model Poisson/Gamma (Bab 6 & 8)
+    EXPOSURE_YR = DURATION_DAYS / 365.25,
+
+    # Log-exposure untuk digunakan sebagai offset dalam GLM
+    LOG_EXPOSURE = log(EXPOSURE_YR)
+  )
+
+cat("Distribusi CLAIM_IND (0 = tidak klaim, 1 = klaim):\n")
+table(motor$CLAIM_IND)
+cat("Proporsi polis dengan klaim:", round(mean(motor$CLAIM_IND == 1) * 100, 2), "%\n")
+```
+
+## Deteksi Outlier (Informatif, Tidak Menghapus)
+
+Deteksi outlier pada tahap ini bersifat deskriptif dan
+informatif, bukan basis penghapusan data. Alasannya:
+1. Distribusi variabel asuransi (premi, klaim) secara inheren right-skewed
+   dan heavy-tailed — klaim besar justru paling penting untuk dimodelkan.
+2. GLM Gamma/Tweedie mengakomodasi variabilitas tinggi secara implisit
+   melalui fungsi variansi V(mu) = mu^2 (Gamma).
+3. Metode IQR dirancang untuk distribusi normal dan tidak reliable untuk
+   distribusi asuransi.
+
+```{r outlier-detection}
+deteksi_outlier <- function(x, nama_kolom) {
+  Q1  <- quantile(x, 0.25, na.rm = TRUE)
+  Q3  <- quantile(x, 0.75, na.rm = TRUE)
+  IQR_val <- Q3 - Q1
+  batas_bawah <- Q1 - 3 * IQR_val
+  batas_atas  <- Q3 + 3 * IQR_val
+  n_outlier   <- sum(x < batas_bawah | x > batas_atas, na.rm = TRUE)
+  cat(sprintf("%-20s | Q1=%.1f | Q3=%.1f | Batas: [%.1f, %.1f] | Outlier: %d\n",
+              nama_kolom, Q1, Q3, batas_bawah, batas_atas, n_outlier))
+}
+
+deteksi_outlier(motor$INSURED_VALUE,                     "INSURED_VALUE")
+deteksi_outlier(motor$PREMIUM,                           "PREMIUM")
+deteksi_outlier(motor$CLAIM_PAID[motor$CLAIM_PAID > 0],   "CLAIM_PAID (>0)")
+deteksi_outlier(motor$CCM_TON,                            "CCM_TON")
+
+cat("\nCatatan: Outlier di atas TIDAK dihapus.",
+    "Ini adalah karakteristik distribusi asuransi yang right-skewed.\n")
+```
+
+## Ringkasan Akhir Dataset
+
+```{r ringkasan-akhir}
+cat("=== RINGKASAN DATASET SETELAH CLEANING ===\n")
+cat("Total observasi:", nrow(motor), "\n")
+cat("Total variabel :", ncol(motor), "\n\n")
+
+cat("Komposisi variabel:\n")
+cat("  - Variabel kategoris   :", sum(sapply(motor, is.factor)), "\n")
+cat("  - Variabel numerik     :", sum(sapply(motor, is.numeric)), "\n")
+cat("  - Variabel tanggal     :", sum(sapply(motor, inherits, "Date")), "\n\n")
+
+cat("Proporsi polis klaim    :", round(mean(motor$CLAIM_IND == 1) * 100, 2), "%\n")
+cat("Proporsi polis TPL-only :", round(mean(motor$COVERAGE_TYPE == "TPL_only") * 100, 2), "%\n")
+
+summary(motor)
+```
+
+```{r export-clean-data}
+# Export dataset bersih untuk digunakan di pemodelan
+write_csv(motor, "vehicle_insurance_data/motor_data_clean.csv")
+cat("Dataset bersih berhasil diekspor ke: motor_data_clean.csv\n")
+```
+
+---
+
+# EDA — Severitas Klaim (Continuous Response)
+
+```{r library-eda-bab8}
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(moments)      # skewness & kurtosis
+library(fitdistrplus) # MLE fitting distribusi
+library(actuar)       # inverse gaussian
+```
+
+Catatan: dataset `motor` di sini adalah hasil akhir Bagian 2 (sudah melalui
+deduplikasi, konversi tipe, imputasi, dan validasi business logic) — tidak
+perlu re-import atau cleaning ulang.
+
+## Filter Subset Bab 8: CLAIM_PAID > 0
+
+Pemodelan severitas klaim kondisional — yaitu besarnya
+klaim bersyarat klaim terjadi. Seluruh EDA berikut dilakukan pada subset ini.
+
+```{r filter-claims}
+df_claims <- motor %>%
+  filter(!is.na(CLAIM_PAID) & CLAIM_PAID > 0)
+
+cat("=== Ringkasan Subset Bab 8 ===\n")
+cat("Total dataset bersih         :", nrow(motor), "polis\n")
+cat("Polis dengan klaim (Y > 0)   :", nrow(df_claims), "polis\n")
+cat("Proporsi klaim               :",
+    round(nrow(df_claims) / nrow(motor) * 100, 2), "%\n")
+cat("Proporsi NON-klaim (zero)    :",
+    round((1 - nrow(df_claims) / nrow(motor)) * 100, 2), "%\n")
+```
+
+Tingginya proporsi nol mengonfirmasi bahwa pemisahan antara
+modeling occurrence (Logistic Regression) dan modeling
+severity (Gamma/Inverse Gaussian) adalah keputusan metodologis yang tepat.
+
+## 3.2 Statistik Deskriptif CLAIM_PAID
+
+```{r desc-stats}
+claim_stats <- df_claims %>%
+  summarise(
+    N        = n(),
+    Min      = min(CLAIM_PAID),
+    Q1       = quantile(CLAIM_PAID, 0.25),
+    Median   = median(CLAIM_PAID),
+    Mean     = mean(CLAIM_PAID),
+    Q3       = quantile(CLAIM_PAID, 0.75),
+    Max      = max(CLAIM_PAID),
+    Std_Dev  = sd(CLAIM_PAID),
+    CV       = sd(CLAIM_PAID) / mean(CLAIM_PAID),
+    Skewness = moments::skewness(CLAIM_PAID),
+    Kurtosis = moments::kurtosis(CLAIM_PAID)
+  )
+print(t(claim_stats))
+
+cat("\n-- Interpretasi ------------------------------------------\n")
+cat("Koefisien variasi (CV)  :", round(claim_stats$CV, 3),
+    "-> variabilitas sangat tinggi\n")
+cat("Skewness                :", round(claim_stats$Skewness, 3),
+    "-> distribusi sangat right-skewed\n")
+cat("Kurtosis                :", round(claim_stats$Kurtosis, 3),
+    "-> ekor sangat berat (heavy-tailed)\n")
+```
+
+## Distribusi CLAIM_PAID: Skala Asli vs Log
+
+```{r hist-raw-log, fig.width=10, fig.height=8, warning=FALSE}
+df_claims <- df_claims %>% mutate(LOG_CLAIM = log(CLAIM_PAID))
+
+p1 <- ggplot(df_claims, aes(x = CLAIM_PAID)) +
+  geom_histogram(bins = 80, fill = "#2E75B6", color = "white", alpha = 0.8) +
+  scale_x_continuous(labels = comma, limits = c(0, quantile(df_claims$CLAIM_PAID, 0.99))) +
+  labs(title = "Distribusi CLAIM_PAID (Skala Asli)",
+       subtitle = "Dipotong pada persentil ke-99 untuk visibilitas",
+       x = "CLAIM_PAID", y = "Frekuensi") +
+  theme_minimal(base_size = 11)
+
+p2 <- ggplot(df_claims, aes(x = CLAIM_PAID)) +
+  geom_boxplot(fill = "#2E75B6", alpha = 0.6, outlier.size = 0.5,
+               outlier.color = "red") +
+  scale_x_continuous(labels = comma, limits = c(0, quantile(df_claims$CLAIM_PAID, 0.99))) +
+  labs(title = "Boxplot CLAIM_PAID", x = "CLAIM_PAID") +
+  theme_minimal(base_size = 11)
+
+p3 <- ggplot(df_claims, aes(x = LOG_CLAIM)) +
+  geom_histogram(bins = 60, fill = "#70AD47", color = "white", alpha = 0.8) +
+  labs(title = "Distribusi log(CLAIM_PAID)",
+       subtitle = "Transformasi log menstabilkan skewness",
+       x = "log(CLAIM_PAID)", y = "Frekuensi") +
+  theme_minimal(base_size = 11)
+
+p4 <- ggplot(df_claims, aes(sample = LOG_CLAIM)) +
+  stat_qq(color = "#70AD47", alpha = 0.3, size = 0.5) +
+  stat_qq_line(color = "red", linewidth = 1) +
+  labs(title = "Q-Q Plot log(CLAIM_PAID)", x = "Theoretical Quantiles",
+       y = "Sample Quantiles") +
+  theme_minimal(base_size = 11)
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## 3.4 Perbandingan Fit Distribusi: Gamma vs Inverse Gaussian
+
+```{r dist-fit, warning=FALSE, message=FALSE, fig.width=11, fig.height=5}
+scale_factor <- 1000000
+claim_scaled <- df_claims$CLAIM_PAID / scale_factor
+
+m <- mean(claim_scaled)
+v <- var(claim_scaled)
+
+start_gamma <- list(shape = m^2 / v, rate = m / v)
+
+fit_gamma <- tryCatch(
+  fitdist(claim_scaled, "gamma", start = start_gamma),
+  error = function(e) {
+    cat("MLE Gamma gagal konvergen — fallback ke method-of-moments (MME)\n")
+    fitdist(claim_scaled, "gamma", method = "mme")
+  }
+)
+
+# -- Fitting Inverse Gaussian dengan fallback yang sama ---------------------
+fit_invg <- tryCatch(
+  fitdist(claim_scaled, "invgauss",
+         start = list(mean = m, shape = m^3 / v),
+         lower = c(0, 0)),
+  error = function(e) {
+    cat("MLE Inverse Gaussian gagal konvergen — fallback ke method-of-moments (MME)\n")
+    fitdist(claim_scaled, "invgauss",
+           start = list(mean = m, shape = m^3 / v),
+           method = "mme",
+           order = c(1, 2))
+  }
+)
+
+cat("Metode estimasi Gamma          :", fit_gamma$method, "\n")
+cat("Metode estimasi Inverse Gaussian:", fit_invg$method, "\n")
+
+cat("=== Perbandingan Goodness of Fit ===\n")
+cat(sprintf("%-20s %12s %12s\n", "Metrik", "Gamma", "Inv.Gaussian"))
+cat(sprintf("%-20s %12.2f %12.2f\n", "AIC", fit_gamma$aic, fit_invg$aic))
+cat(sprintf("%-20s %12.2f %12.2f\n", "BIC", fit_gamma$bic, fit_invg$bic))
+
+par(mfrow = c(1, 2))
+
+# Batas tampilan visual — dihitung dari persentil, BUKAN dari data penuh
+xlim_max <- quantile(claim_scaled, 0.99)
+x_range  <- seq(0, xlim_max, length.out = 500)
+
+# PENTING: filter data ke rentang tampilan dulu, baru hitung breaks histogram.
+# Kalau breaks dihitung dari data penuh (termasuk outlier ekstrem jauh di luar
+# xlim), lebar setiap bin jadi sangat besar sehingga area yang ditampilkan
+# (0 - xlim_max) hanya berisi 1-2 bin raksasa yang tampak seperti blok rata,
+# bukan histogram yang informatif.
+claim_visual <- claim_scaled[claim_scaled <= xlim_max]
+
+# Plot Gamma
+hist(claim_visual, breaks = seq(0, xlim_max, length.out = 60), probability = TRUE,
+     xlim = c(0, xlim_max),
+     main = "Gamma Fit", xlab = "CLAIM_PAID (skala dibagi 1.000.000)",
+     col = "#AED6F1", border = "white")
+lines(x_range, dgamma(x_range,
+                       shape = fit_gamma$estimate["shape"],
+                       rate  = fit_gamma$estimate["rate"]),
+      col = "red", lwd = 2)
+
+# Plot Inverse Gaussian
+hist(claim_visual, breaks = seq(0, xlim_max, length.out = 60), probability = TRUE,
+     xlim = c(0, xlim_max),
+     main = "Inverse Gaussian Fit", xlab = "CLAIM_PAID (skala dibagi 1.000.000)",
+     col = "#A9DFBF", border = "white")
+lines(x_range, dinvgauss(x_range,
+                          mean  = fit_invg$estimate["mean"],
+                          shape = fit_invg$estimate["shape"]),
+      col = "darkgreen", lwd = 2)
+par(mfrow = c(1, 1))
+
+winner <- ifelse(fit_gamma$aic < fit_invg$aic, "Gamma", "Inverse Gaussian")
+cat("\n-- Kesimpulan ------------------------------------------\n")
+cat("Distribusi dengan AIC lebih kecil:", winner, "\n")
+cat("Kedua distribusi adalah kasus khusus Tweedie (p=2 Gamma, p=3 InvGauss).\n")
+cat("Grid search atas p akan dilakukan pada tahap pemodelan.\n")
+```
+
+## Deteksi Outlier CLAIM_PAID
+
+```{r outlier-detection-eda}
+Q1  <- quantile(df_claims$CLAIM_PAID, 0.25)
+Q3  <- quantile(df_claims$CLAIM_PAID, 0.75)
+IQR_val <- Q3 - Q1
+batas_atas <- Q3 + 3 * IQR_val
+
+outlier_df <- df_claims %>% filter(CLAIM_PAID > batas_atas)
+
+cat("=== Deteksi Outlier CLAIM_PAID (batas 3xIQR) ===\n")
+cat("Q1                :", comma(Q1), "\n")
+cat("Q3                :", comma(Q3), "\n")
+cat("Batas atas (3xIQR):", comma(round(batas_atas)), "\n")
+cat("Jumlah outlier    :", nrow(outlier_df), "obs\n")
+cat("Proporsi outlier  :", round(nrow(outlier_df) / nrow(df_claims) * 100, 2), "%\n")
+
+cat("\n-- Keputusan ------------------------------------------\n")
+cat("Outlier TIDAK dihapus — nilai klaim ekstrem adalah fenomena nyata\n")
+cat("dalam asuransi kendaraan. Distribusi Gamma/Tweedie dirancang untuk\n")
+cat("menangani ekor berat semacam ini.\n")
+```
+
+## Hubungan Prediktor Kategorik vs CLAIM_PAID
+
+```{r boxplots-cat, fig.width=12, fig.height=10, warning=FALSE}
+plot_box <- function(df, var, title) {
+  ggplot(df, aes(x = reorder(.data[[var]], CLAIM_PAID, median), y = CLAIM_PAID)) +
+    geom_boxplot(fill = "#AED6F1", outlier.size = 0.3,
+                 outlier.alpha = 0.3, outlier.color = "red") +
+    scale_y_continuous(labels = comma,
+                       limits = c(0, quantile(df$CLAIM_PAID, 0.95))) +
+    labs(title = title, x = NULL, y = "CLAIM_PAID") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))  # <- ganti coord_flip()
+}
+
+pb1 <- plot_box(df_claims, "SEX",          "CLAIM_PAID vs SEX")
+pb2 <- plot_box(df_claims, "INSR_TYPE",    "CLAIM_PAID vs INSR_TYPE")
+pb3 <- plot_box(df_claims, "TYPE_VEHICLE", "CLAIM_PAID vs TYPE_VEHICLE")
+pb4 <- plot_box(df_claims, "USAGE",        "CLAIM_PAID vs USAGE")
+grid.arrange(pb1, pb2, pb3, pb4, ncol = 2)
+```
+
+## Variabel Prediktor Numerik: Distribusi & Korelasi
+
+```{r desc-numeric}
+vars_num <- c("INSURED_VALUE", "PREMIUM", "PROD_YEAR")
+# Catatan: CCM_TON dan VEHICLE_AGE tidak disertakan — keduanya bukan bagian
+# dari 9 prediktor resmi paper Terefe & Aga (Table 1): Sex, Insurance type,
+# Vehicle type, Usage, Make, Coverage, Production year, Insured value, Premium
+vars_num <- vars_num[vars_num %in% names(df_claims)]
+
+print(summary(df_claims %>% dplyr::select(all_of(vars_num))))
+
+cat("\nSkewness Variabel Numerik:\n")
+for (v in vars_num) {
+  val <- df_claims[[v]]
+  val <- val[!is.na(val)]
+  cat(sprintf("  %-20s : %6.3f\n", v, moments::skewness(val)))
+}
+```
+
+```{r correlation, fig.width=8, fig.height=6, warning=FALSE}
+cor_data <- df_claims %>% dplyr::select(CLAIM_PAID, all_of(vars_num)) %>% na.omit()
+cor_matrix <- round(cor(cor_data), 3)
+
+cat("=== Matriks Korelasi Pearson ===\n")
+print(cor_matrix)
+
+cor_df <- as.data.frame(as.table(cor_matrix))
+names(cor_df) <- c("Var1", "Var2", "Korelasi")
+
+ggplot(cor_df, aes(Var1, Var2, fill = Korelasi)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Korelasi, 2)), size = 2.5) +
+  scale_fill_gradient2(low = "#D32F2F", mid = "white", high = "#1565C0",
+                       midpoint = 0, limits = c(-1, 1)) +
+  labs(title = "Heatmap Korelasi Pearson (Subset CLAIM_PAID > 0)") +
+  theme_minimal(base_size = 9) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 3.8 Transformasi Log pada Prediktor Skewed
+
+Variabel numerik dengan `|skewness| > 1` ditransformasi log
+ untuk menstabilkan hubungan dengan respons pada skala
+fungsi tautan log GLM. Keputusan ini adalah dasar dari transformasi
+`log_INSURED_VALUE`, `log_PREMIUM`, dan `log_CCM_TON` yang dipakai pada
+tahap pemodelan Bab 8.
+
+```{r log-transform, fig.width=10, fig.height=4, warning=FALSE}
+skew_vals <- sapply(vars_num, function(v) {
+  moments::skewness(df_claims[[v]][!is.na(df_claims[[v]])])
+})
+vars_log_candidate <- names(skew_vals[abs(skew_vals) > 1])
+
+cat("Variabel dengan |skewness| > 1 (kandidat transformasi log):\n")
+print(round(skew_vals[abs(skew_vals) > 1], 3))
+
+for (v in vars_log_candidate) {
+  df_claims[[paste0("LOG_", v)]] <- log(df_claims[[v]] + 1)
+}
+```
+
+## 3.9 Ringkasan EDA Bab 8
+
+```{r summary-eda-bab8, echo=FALSE}
+cat("==================================================================\n")
+cat("RINGKASAN EDA BAB 8 - SEVERITAS KLAIM\n")
+cat("==================================================================\n\n")
+cat("A. VARIABEL RESPONS (CLAIM_PAID)\n")
+cat("   - Distribusi sangat right-skewed, heavy-tailed\n")
+cat("   - Gamma GLM (p=2) sebagai baseline, Tweedie (p>2) sebagai alternatif\n")
+cat("   - Fungsi tautan: log\n\n")
+cat("B. VARIABEL KATEGORIK\n")
+cat("   - Pengelompokan 'Others' dilakukan pada kategori <3% di subset klaim\n\n")
+cat("C. VARIABEL NUMERIK\n")
+cat("   - INSURED_VALUE, PREMIUM, CCM_TON: skewed -> log transform\n\n")
+cat("D. ALUR PEMODELAN SELANJUTNYA\n")
+cat("   1. Grid search parameter p Tweedie\n")
+cat("   2. Stepwise AIC untuk seleksi variabel\n")
+cat("   3. Diagnostik: deviance residuals, Cook's Distance\n")
+cat("   4. Evaluasi: train/test split 70/30\n")
+```
+
+```{r export-eda-bab8}
+write_csv(df_claims, "vehicle_insurance_data/df_claims_bab8.csv")
+cat("Dataset siap pemodelan Bab 8 diekspor ke: df_claims_bab8.csv\n")
+cat("Dimensi:", nrow(df_claims), "x", ncol(df_claims), "\n")
+```
