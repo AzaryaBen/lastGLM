@@ -55,6 +55,31 @@ str(data)
 summary(data)
 ```
 
+```{r}
+mean(data$CLAIM_PAID)
+median(data$CLAIM_PAID)
+sd(data$CLAIM_PAID)
+
+cv <- sd(data$CLAIM_PAID) /
+      mean(data$CLAIM_PAID)
+
+skewness(data$CLAIM_PAID)
+kurtosis(data$CLAIM_PAID)
+
+quantile(
+  data$CLAIM_PAID,
+  probs = c(
+    0.01,
+    0.05,
+    0.25,
+    0.5,
+    0.75,
+    0.95,
+    0.99
+  )
+)
+```
+
 ---
 
 # Cek Distribusi Respons
