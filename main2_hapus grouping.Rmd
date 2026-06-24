@@ -43,7 +43,7 @@ if (identical(names(df_11_14), names(df_14_18))) {
 
 ## Penyamaan Tipe Data Sebelum Penggabungan
 
-Justifikasi: `CARRYING_CAPACITY` terbaca dengan tipe berbeda di kedua file
+`CARRYING_CAPACITY` terbaca dengan tipe berbeda di kedua file
 sehingga konversi `as.numeric()` perlu dilakukan di kedua sisi sebelum penggabungan. 
 
 ```{r samakan tipe carrying capacity}
@@ -81,6 +81,10 @@ str(motor_data_all)
 
 ```{r summary-awal}
 summary(motor_data_all)
+```
+
+```{r summary-awal-str}
+str(motor_data_all)
 ```
 
 ```{r alias motor}
